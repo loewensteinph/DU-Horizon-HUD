@@ -4,22 +4,39 @@ Nav = Navigator.new(system, core, unit)
 script = {}  -- wrappable container for all the code. Different than normal DU Lua in that things are not seperated out.
 
 -- Edit LUA Variable user settings.  Must be global to work with databank system as set up due to using _G assignment
+yawSpeedFactor = 1 -- export: (Default: 1) For keyboard control
+torqueFactor = 2 -- export: (Default: 2) Force factor applied to reach rotationSpeed<br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
+brakeSpeedFactor = 3 -- export: (Default: 3) When braking, this factor will increase the brake force by brakeSpeedFactor * velocity<br>Valid values: Superior or equal to 0.01
+brakeFlatFactor = 1 -- export: (Default: 1) When braking, this factor will increase the brake force by a flat brakeFlatFactor * velocity direction><br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
+pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
+pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
+rollSpeedFactor = 1.5 -- export: (Default: 1.5) This factor will increase/decrease the player input along the roll axis<br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
+
+-- VARIABLES TO BE SAVED GO HERE, SAVEABLE are Edit LUA Parameter settable, AUTO are ship status saves that occur over get up and sit down.
+local saveableVariables = { "yawSpeedFactor", "torqueFactor", "brakeSpeedFactor",
+                        "brakeFlatFactor", "pitchSpeedFactor","rollSpeedFactor"}
+-- Edit LUA Variable user settings.  Must be global to work with databank system as set up due to using _G assignment
 -- Auto Variable declarations that store status of ship. Must be global because they get saved/read to Databank due to using _G assignment
 local pitchInput = 0
 local rollInput = 0
 local yawInput = 0
 local brakeInput = 0
 local Kinematic = nil
-
-targetAltitude = 0
-increment = 0.125
-finalBrakeInput = 0
-level = true
-autoalt = true
-braking = false
-startPosition = vec3(core.getConstructWorldPos())
 initialAlt = core.getAltitude()
-targetAltitude = initialAlt
+targetAltitude = core.getAltitude()
+-- flight automation options
+level = true -- Alt 1 - Autolevel only allow yaw
+flip = false -- not used yet
+autoalt = true -- Alt 2 - Reach set target alt
+finalBrakeInput = 0
+upAmount = 0
+
+-- todo make freeze configurable
+if 1 == 1 then
+    system.freeze(1)
+    system.lockView(1)
+end
+
 -- Function Definitions
 function ternary(cond, T, F)
     if cond then
@@ -134,16 +151,12 @@ function Kinematics()
 end
 function script.onStart()
     VERSION_NUMBER = 0.803
-
 end
 function script.onFlush()
 
     LastMaxBrake = 0
     local atmosphere = unit.getAtmosphereDensity()
-
-
     local torqueFactor = 2 -- Force factor applied to reach rotationSpeed<br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
-
     -- validate params
     yawSpeedFactor = math.max(yawSpeedFactor, 0.01)
     torqueFactor = math.max(torqueFactor, 0.01)
@@ -151,6 +164,7 @@ function script.onFlush()
     brakeFlatFactor = math.max(brakeFlatFactor, 0.01)
     stabilization = 0
 
+    currentAltitude = core.getAltitude()
     -- final inputs
     --finalBrakeInput = brakeInput
 
@@ -213,14 +227,13 @@ function script.onFlush()
 
         --vecDiff = vec3(core.getConstructWorldPos()) - vec3(startorientation)
 
-        currentaltitude = core.getAltitude()
          --initialAlt + vecDiff:project_on(constructUp):len() * utils.sign(vecDiff:dot(constructUp))
-
-        if currentaltitude == nil then
-            currentaltitude = 0
+         
+        if currentAltitude == nil then
+            currentAltitude = 0
         end
 
-        diff = targetAltitude - currentaltitude
+        diff = targetAltitude - currentAltitude
 
         if atmosphere > 0.2 then
             MaxSpeed = 1100
@@ -232,20 +245,20 @@ function script.onFlush()
 
         if
             math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and
-                math.abs((targetAltitude - currentaltitude)) < 25 and
-                math.abs((targetAltitude - currentaltitude)) > 5
+                math.abs((targetAltitude - currentAltitude)) < 25 and
+                math.abs((targetAltitude - currentAltitude)) > 5
          then
             finalBrakeInput = 1
         elseif
             math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and atmosphere > 0 and
-                targetAltitude < currentaltitude and
+                targetAltitude < currentAltitude and
                 math.abs(vSpeed) > 25 and
-                brakeDistance > math.abs((targetAltitude - currentaltitude))
+                brakeDistance > math.abs((targetAltitude - currentAltitude))
          then --math.abs(targetSpeed) < 5
             --  elseif atmosphere == 0 and alt < 6000 and  math.abs(vSpeed) > MaxSpeed / 3.6 then --math.abs(targetSpeed) < 5
             --      finalBrakeInput = 1
             finalBrakeInput = 1
-        elseif teledown > 0 and targetAltitude < currentaltitude and math.abs(vSpeed) > 10 then
+        elseif teledown > 0 and targetAltitude < currentAltitude and math.abs(vSpeed) > 10 then
             finalBrakeInput = 1
             targetSpeed = 10
         else
@@ -257,14 +270,14 @@ function script.onFlush()
 
         --system.print(targetSpeed)
 
-        if currentaltitude < targetAltitude then
+        if currentAltitude < targetAltitude then
             up_down_switch = -1
             targetVelocity = (up_down_switch * targetSpeed / 3.6) * worldVertical
             stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
             Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
         end
 
-        if currentaltitude > targetAltitude then
+        if currentAltitude > targetAltitude then
             up_down_switch = 1
             targetVelocity = (up_down_switch * math.abs(targetSpeed) / 3.6) * worldVertical
             stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
@@ -379,9 +392,8 @@ end
 function script.onUpdate()
     --system.print("hor" ..Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal))
     --system.print("vert" .. Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical))
-
-    current_max = 0
-    currentvert_max = 0
+    --current_max = 0
+    --currentvert_max = 0
 
     if vSpeedSigned == nil then
         vSpeed_hud = 0
@@ -389,13 +401,13 @@ function script.onUpdate()
         vSpeed_hud = round(vSpeedSigned * 3.6, 0)
     end
 
-    if vert_engine.getMaxThrust() == nil then
-        currentvert_max = 0
-    else
-        currentvert_max = vert_engine.getMaxThrust()
-    end
+    --if vert_engine.getMaxThrust() == nil then
+    --    currentvert_max = 0
+    --else
+     --   currentvert_max = vert_engine.getMaxThrust()
+    --end
 
-    currentvert = round(vert_engine.getThrust() / currentvert_max, 2) * 100
+    currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
 
     currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
 
@@ -405,18 +417,21 @@ function script.onUpdate()
         thrustbarneg = true
     end
 
-    if currentaltitude == nil then
-        currentaltitude = 0
+    if currentAltitude == nil then
+        currentAltitude = 0
     end
+    if currentAltitude == nil then
+        targetAltitude = 0
+    end    
 
-    currentaltitude = round(currentaltitude, 2)
+    currentaltitude = round(currentAltitude, 2)
     targetAltitude = round(targetAltitude, 2)
     initialAlt = round(initialAlt, 2)
 
     deltaheight =
         round(
-        math.min(math.abs(currentaltitude), math.abs(targetAltitude)) /
-            math.max(math.abs(currentaltitude), math.abs(targetAltitude)),
+        math.min(math.abs(currentAltitude), math.abs(targetAltitude)) /
+            math.max(math.abs(currentAltitude), math.abs(targetAltitude)),
         2
     ) * 100
 
@@ -692,14 +707,41 @@ function script.onInputText(text)
 end
 
 function script.onActionStart(action)
-    if action == "forward" then
+    if action == "brake" then
+        brakeInput = brakeInput + 1
+        local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
+        if (longitudinalCommandType == axisCommandType.byTargetSpeed) then
+            local targetSpeed = Nav.axisCommandManager:getTargetSpeed(axisCommandId.longitudinal)
+            if (math.abs(targetSpeed) > constants.epsilon) then
+                Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, - utils.sign(targetSpeed))
+            end
+        end
+    elseif action == "forward" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 1.0)
+            increment = 0.125
+        else
         pitchInput = pitchInput - 1
+        end 
     elseif action == "backward" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -1.0)
+            increment = 0.125
+        else
         pitchInput = pitchInput + 1
+        end    
     elseif action == "left" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, -1.0)
+        else    
         rollInput = rollInput - 1
+        end
     elseif action == "right" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, 1.0)
+        else    
         rollInput = rollInput + 1
+        end
     elseif action == "yawright" then
         yawInput = yawInput - 1
     elseif action == "yawleft" then
@@ -708,51 +750,123 @@ function script.onActionStart(action)
         Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, 1.0)
     elseif action == "strafeleft" then
         Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, -1.0)
+    elseif action == "speedup" then
+        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 5.0)
+    elseif action == "speeddown" then
+        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -5.0)                
     elseif action == "up" then
-        upAmount = upAmount + 1
+        if autoalt then
+            increment = 0.125    
+        else   
         Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
         Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, 1.0)
+        end
     elseif action == "down" then
-        upAmount = upAmount - 1
+        if autoalt then
+            increment = 0.125
+        else   
         Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
         Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, -1.0)
+        end
     elseif action == "option1" then
-        IncrementAutopilotTargetIndex()
-        toggleView = false
+        level = not level
     elseif action == "option2" then
-        DecrementAutopilotTargetIndex()
-        toggleView = false
+        autoalt = not autoalt
     end
 end
 
 function script.onActionStop(action)
-    if action == "forward" then
-        pitchInput = 0
+    if action == "brake" then
+        brakeInput = brakeInput - 1
+    elseif action == "forward" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
+            increment = 0.125
+        else
+        pitchInput = pitchInput + 1
+        end
     elseif action == "backward" then
-        pitchInput = 0
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
+            increment = 0.125
+        else
+        pitchInput = pitchInput - 1
+        end    
     elseif action == "left" then
-        rollInput = 0
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, 1.0)
+        else    
+        rollInput = rollInput + 1
+        end
     elseif action == "right" then
-        rollInput = 0
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, -1.0)
+        else    
+        rollInput = rollInput - 1
+        end
     elseif action == "yawright" then
-        yawInput = 0
+        yawInput = yawInput + 1
     elseif action == "yawleft" then
-        yawInput = 0
+        yawInput = yawInput - 1
     elseif action == "straferight" then
         Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.lateral, -1.0)
     elseif action == "strafeleft" then
         Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.lateral, 1.0)
     elseif action == "up" then
-        upAmount = 0
+        if autoalt then
+            increment = 0.125
+        else   
         Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, -1.0)
         Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
-        Nav:setEngineForceCommand("hover", vec3(), 1)
+        end
     elseif action == "down" then
-        upAmount = 0
+            if autoalt then
+                increment = 0.125
+        else   
         Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, 1.0)
         Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
-        Nav:setEngineForceCommand("hover", vec3(), 1)
+        end
+    elseif action == "option2" then
+        initialAlt = core.getAltitude()
+        targetAltitude = initialAlt
     end
 end
 
+function script.onActionLoop(action)
+    if action == "brake" then
+        local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
+        if (longitudinalCommandType == axisCommandType.byTargetSpeed) then
+            local targetSpeed = Nav.axisCommandManager:getTargetSpeed(axisCommandId.longitudinal)
+            if (math.abs(targetSpeed) > constants.epsilon) then
+                Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, - utils.sign(targetSpeed))
+            end
+        end
+    elseif action == "forward" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
+            increment = 0.125
+        else
+        --pitchInput = pitchInput + 1
+        end
+    elseif action == "backward" then
+        if level then
+            Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, -2 * increment)
+            increment =  increment + 0.125
+        else
+        --pitchInput = pitchInput - 1
+        end
+    elseif action == "up" then
+        if autoalt then
+            targetAltitude = targetAltitude + increment
+            increment = increment + 0.0125
+            end    
+    elseif action == "down" then
+            if autoalt then
+                targetAltitude = targetAltitude - increment
+                increment = increment + 0.0125
+                end 
+
+    end
+
+end    
 script.onStart()

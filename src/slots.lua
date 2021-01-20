@@ -7,7 +7,8 @@ antigrav = AntiGravityGeneratorUnit
 warpdrive = WarpDriveUnit
 gyro = GyroUnit
 weapon = WeaponUnit -- select=manual
-dbHud = databank
+db = databank
+tele_down = Telemeter
 vBooster = VerticalBooster
 hover = Hovercraft
 door = DoorUnit -- select=manual

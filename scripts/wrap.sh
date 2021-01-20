@@ -52,7 +52,8 @@ SLOTS=(
     warpdrive:class=WarpDriveUnit
     gyro:class=GyroUnit
     weapon:class=WeaponUnit,select=manual
-    dbHud:class=databank
+    db:class=databank
+    tele_down:class=Telemeter
     vBooster:class=VerticalBooster
     hover:class=Hovercraft
     door:class=DoorUnit,select=manual
@@ -67,10 +68,14 @@ lua ${ROOTDIR}/scripts/wrap.lua --handle-errors --output yaml \
              --name "HorizonHUD - v$VERSION_NUMBER (Minified)" \
              $WORK_DIR/HorizonHUD.min.lua $WORK_DIR/HorizonHUD.wrapped.conf \
              --slots ${SLOTS[*]}
-
 # Re-insert the exports
-sed "/script={}/e cat $WORK_DIR/HorizonHUD.exports" $WORK_DIR/HorizonHUD.wrapped.conf > $CONF_DST
+if [[ "$MINIFY" == "true" ]]; then
+    sed "/script={}/e cat $WORK_DIR/HorizonHUD.exports" $WORK_DIR/HorizonHUD.wrapped.conf > $CONF_DST
+else
+    sed "/script = {}/e cat $WORK_DIR/HorizonHUD.exports" $WORK_DIR/HorizonHUD.wrapped.conf > $CONF_DST
+fi
 
+#cat $WORK_DIR/HorizonHUD.exports
 # Fix up minified L_TEXTs which requires a space after the comma
 sed -i -E 's/L_TEXT\(("[^"]*"),("[^"]*")\)/L_TEXT(\1, \2)/g' $CONF_DST
 

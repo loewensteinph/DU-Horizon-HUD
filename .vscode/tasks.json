@@ -18,6 +18,20 @@
             "problemMatcher": []
         },
         {
+            "label": "Deploy",
+            "type": "shell",
+            "group": "build",
+            "command": "cp",
+            "dependsOn": [
+                "Wrap (readable)"
+            ],
+            "args": [
+                "HorizonHUD.conf",
+                "${config:du.autoconfdir}/${config:du.testconffilename}"
+            ],
+            "problemMatcher": []
+        },
+        {
             "label": "Wrap (minified)",
             "type": "shell",
             "group": "build",            
