@@ -18,30 +18,30 @@ fi
 # Parse args, or use defaults
 MINIFY="${1:-false}"
 # We expect this file to be run from the <repo>/scripts directory
-LUA_SRC=${2:-$ROOTDIR/src/ButtonHUD.lua}
-CONF_DST=${3:-$ROOTDIR/ButtonHUD.conf}
+LUA_SRC=${2:-$ROOTDIR/src/HorizonHUD.lua}
+CONF_DST=${3:-$ROOTDIR/HorizonHUD.conf}
 
 # Make a fresh work dir
 WORK_DIR=${ROOTDIR}/scripts/work
 (rm -rf $WORK_DIR/* || true) && mkdir -p $WORK_DIR
 
 # Extract the exports because the minifier will eat them.
-grep "\-- \?export:" $LUA_SRC | sed -e 's/^[ \t]*/        /' -e 's/-- export:/--export:/' > $WORK_DIR/ButtonHUD.exports
+grep "\-- \?export:" $LUA_SRC | sed -e 's/^[ \t]*/        /' -e 's/-- export:/--export:/' > $WORK_DIR/HorizonHUD.exports
 
 VERSION_NUMBER=`grep "VERSION_NUMBER = .*" $LUA_SRC | sed -E "s/\s*VERSION_NUMBER = (.*)/\1/"`
 if [[ "${VERSION_NUMBER}" == "" ]]; then
     echo "ERROR: Failed to detect version number"; exit 1
 fi
 
-sed "/-- \?export:/d;/require 'src.slots'/d" $LUA_SRC > $WORK_DIR/ButtonHUD.extracted.lua
+sed "/-- \?export:/d;/require 'src.slots'/d" $LUA_SRC > $WORK_DIR/HorizonHUD.extracted.lua
 
 # Minify the lua
 if [[ "$MINIFY" == "true" ]]; then
     echo "Minifying ... "
     # Using stdin pipe to avoid a bug in luamin complaining about "No such file: ``"
-    echo "$WORK_DIR/ButtonHUD.extracted.lua" | $LUAMIN --file > $WORK_DIR/ButtonHUD.min.lua
+    echo "$WORK_DIR/HorizonHUD.extracted.lua" | $LUAMIN --file > $WORK_DIR/HorizonHUD.min.lua
 else
-    cp $WORK_DIR/ButtonHUD.extracted.lua $WORK_DIR/ButtonHUD.min.lua
+    cp $WORK_DIR/HorizonHUD.extracted.lua $WORK_DIR/HorizonHUD.min.lua
 fi
 
 # Wrap in AutoConf
@@ -65,16 +65,16 @@ SLOTS=(
 echo "Wrapping ..."
 lua ${ROOTDIR}/scripts/wrap.lua --handle-errors --output yaml \
              --name "ButtonsHud - Dimencia and Archaegeo v$VERSION_NUMBER (Minified)" \
-             $WORK_DIR/ButtonHUD.min.lua $WORK_DIR/ButtonHUD.wrapped.conf \
+             $WORK_DIR/HorizonHUD.min.lua $WORK_DIR/HorizonHUD.wrapped.conf \
              --slots ${SLOTS[*]}
 
 # Re-insert the exports
-sed "/script={}/e cat $WORK_DIR/ButtonHUD.exports" $WORK_DIR/ButtonHUD.wrapped.conf > $CONF_DST
+sed "/script={}/e cat $WORK_DIR/HorizonHUD.exports" $WORK_DIR/HorizonHUD.wrapped.conf > $CONF_DST
 
 # Fix up minified L_TEXTs which requires a space after the comma
 sed -i -E 's/L_TEXT\(("[^"]*"),("[^"]*")\)/L_TEXT(\1, \2)/g' $CONF_DST
 
-echo "$VERSION_NUMBER" > ${ROOTDIR}/ButtonHUD.conf.version
+echo "$VERSION_NUMBER" > ${ROOTDIR}/HorizonHUD.conf.version
 
 echo "Compiled v$VERSION_NUMBER at ${CONF_DST}"
 

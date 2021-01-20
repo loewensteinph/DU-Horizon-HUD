@@ -1,8 +1,8 @@
-ButtonHUD.min.lua
-ButtonHUD.wrapped.conf
-ButtonHUD.exports
-ButtonHUD.extracted.lua
-ButtonHUD.conf.version
+HorizonHUD.min.lua
+HorizonHUD.wrapped.conf
+HorizonHUD.exports
+HorizonHUD.extracted.lua
+HorizonHUD.conf.version
 scripts/node_modules/**
 scripts/work/**
 src/du

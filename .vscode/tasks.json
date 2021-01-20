@@ -12,7 +12,7 @@
                 "Wrap (minified)"
             ],
             "args": [
-                "ButtonHUD.conf",
+                "HorizonHUD.conf",
                 "${config:du.autoconfdir}/${config:du.testconffilename}"
             ],
             "problemMatcher": []

@@ -1,5 +1,5 @@
 ## How to Install
-1. Scroll down the the **Assets** and click on **`ButtonHUD.conf`**, this should trigger a download for this file.
+1. Scroll down the the **Assets** and click on **`HorizonHUD.conf`**, this should trigger a download for this file.
 1. Save the file to %ProgramData%\Dual Universe\Game\data\lua\autoconf\custom (or equivalent directory if you did not do default install), the filename does not matter (as long as it's still .conf)
 1. In-game, right click your seat and go to Advanced -> Update custom autoconf list - If you get a YAML error, you did not follow the above directions correctly.
 1. Again, right click your seat and select Advanced -> Run Custom Autoconfigure -> ButtonsHud - Dimencia and Archaegeo
