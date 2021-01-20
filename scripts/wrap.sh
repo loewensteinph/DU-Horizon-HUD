@@ -64,7 +64,7 @@ SLOTS=(
 
 echo "Wrapping ..."
 lua ${ROOTDIR}/scripts/wrap.lua --handle-errors --output yaml \
-             --name "ButtonsHud - Dimencia and Archaegeo v$VERSION_NUMBER (Minified)" \
+             --name "HorizonHUD - v$VERSION_NUMBER (Minified)" \
              $WORK_DIR/HorizonHUD.min.lua $WORK_DIR/HorizonHUD.wrapped.conf \
              --slots ${SLOTS[*]}
 
