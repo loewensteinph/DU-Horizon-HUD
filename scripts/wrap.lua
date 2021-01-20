@@ -42,7 +42,7 @@ do
 
                 return t1
             end
-
+--test
             -- A property is a tuple {name, callback}.
             -- properties.args is number of properties that can be set as arguments
             -- when calling an object.
