@@ -58,7 +58,7 @@ SLOTS=(
     hover:class=Hovercraft
     door:class=DoorUnit,select=manual
     forcefield:class=ForceFieldUnit,select=manual
-    atmofueltank:class=AtmoFuelContainer,select=manual
+    atmofueltank:class=AtmoFuelContainer,
     spacefueltank:class=SpaceFuelContainer,select=manual
     rocketfueltank:class=RocketFuelContainer,select=manual
 )
