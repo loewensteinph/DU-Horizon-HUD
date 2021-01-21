@@ -150,7 +150,7 @@ function Kinematics()
     return Kinematic
 end
 function script.onStart()
-    VERSION_NUMBER = 0.803
+    VERSION_NUMBER = 0.001
 end
 function script.onFlush()
 
