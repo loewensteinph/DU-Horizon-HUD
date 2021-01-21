@@ -1,4 +1,4 @@
 ## To be defined
 
-![Optional Text](../content/readme1.png)
-![Optional Text](../content/readme2.png)
+<img src="https://raw.githubusercontent.com/loewensteinph/DU-Horizon-HUD/main/content/readme1.png" width="400px" height="auto">
+<img src="https://raw.githubusercontent.com/loewensteinph/DU-Horizon-HUD/main/content/readme2.png" width="400px" height="auto">
