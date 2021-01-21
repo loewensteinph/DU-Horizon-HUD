@@ -13,7 +13,7 @@ vBooster = VerticalBooster
 hover = Hovercraft
 door = DoorUnit -- select=manual
 forcefield = ForceFieldUnit -- select=manual
-atmofueltank = AtmoFuelContainer -- select=manual
+atmofueltank = AtmoFuelContainer
 spacefueltank = SpaceFuelContainer -- select=manual
 rocketfueltank = RocketFuelContainer -- select=manual
 
