@@ -11,7 +11,7 @@ brakeFlatFactor = 1 -- export: (Default: 1) When braking, this factor will incre
 pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
 pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
 rollSpeedFactor = 1.5 -- export: (Default: 1.5) This factor will increase/decrease the player input along the roll axis<br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
-dampingMultiplier = 40 -- export: (Default: 40) How strongly autopilot dampens when nearing the correct orientation
+dampingMultiplier = 70 -- export: (Default: 40) How strongly autopilot dampens when nearing the correct orientation
 -- VARIABLES TO BE SAVED GO HERE, SAVEABLE are Edit LUA Parameter settable, AUTO are ship status saves that occur over get up and sit down.
 local saveableVariables = { "yawSpeedFactor", "torqueFactor", "brakeSpeedFactor",
                         "brakeFlatFactor", "pitchSpeedFactor","rollSpeedFactor","dampingMultiplier"}
@@ -25,6 +25,8 @@ local yawInput2 = 0
 local rollInput2 = 0
 local brakeInput = 0
 local Kinematic = nil
+local hSpd = 0
+local vSpd = 0
 
 initialAlt = core.getAltitude()
 targetAltitude = core.getAltitude()
@@ -34,15 +36,19 @@ apActive = false
 
 -- function localizations for improved performance when used frequently or in loops.
 local atmosphere = unit.getAtmosphereDensity
+local constructMass = core.getConstructMass
 
 -- AP Stuff
+vMaxSpeed = 0
+hMaxSpeed = 0
 previousYawAmount = 0
 previousPitchAmount = 0
 pitchAmount = 0
 local autopilotStrength = 0.2 -- How strongly autopilot tries to point at a target
-local alignmentTolerance = 0.001 -- How closely it must align to a planet before accelerating to it
+local alignmentTolerance = 0.021 -- How closely it must align to a planet before accelerating to it
 local minimumRateOfChange = math.cos(30*constants.deg2rad) -- Adjust 30 which is taken from stall angle
 APTarget = nil
+APisaligned = false
 
 -- flight automation options
 level = true -- Alt 1 - Autolevel only allow yaw
@@ -531,41 +537,39 @@ function alignToWorldVector(vector, tolerance)
     -- Sets inputs to attempt to point at the autopilot target
     -- Meant to be called from Update or Tick repeatedly
     --if rateOfChange > (minimumRateOfChange+0.08) then
-    if tolerance == nil then
-        tolerance = alignmentTolerance
-    end
+        if tolerance == nil then
+            tolerance = alignmentTolerance
+        end
         vector = vec3(vector):normalize()
         local targetVec = (vec3(core.getConstructWorldOrientationForward()) - vector)
         local yawdiff = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationRight())
 
-        --system.print("getMagnitudeInDirection"..yawdiff)
-        --system.print("tolerance"..math.min(tolerance,alignmentTolerance))
-
-        if math.abs(yawdiff)>math.min(tolerance,alignmentTolerance) then
-            local autopilotYawStrength = autopilotStrength 
-            autopilotYawStrength = utils.clamp(autopilotYawStrength,math.abs(yawdiff),autopilotStrength)
-            local yawAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationRight()) *
+        local autopilotYawStrength = autopilotStrength 
+        autopilotYawStrength = utils.clamp(autopilotYawStrength,math.abs(yawdiff),autopilotStrength)
+        local yawAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationRight()) *
                                     autopilotYawStrength
-            local pitchAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationUp()) *
+        local pitchAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationUp()) *
                                 autopilotStrength
-            if previousYawAmount == 0 then previousYawAmount = yawAmount / 2 end
-            if previousPitchAmount == 0 then previousPitchAmount = pitchAmount / 2 end
-            yawInput2 = yawInput2 - (yawAmount + (yawAmount - previousYawAmount) * dampingMultiplier)
-            previousYawAmount = yawAmount
-            previousPitchAmount = pitchAmount
+        if previousYawAmount == 0 then previousYawAmount = yawAmount / 2 end
+        if previousPitchAmount == 0 then previousPitchAmount = pitchAmount / 2 end
 
-            system.print("getMagnitudeInDirection"..yawdiff)
-            system.print("yawInput2"..yawInput2)
-            -- Return true or false depending on whether or not we're aligned
-                if math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
-                    return true           
-                else 
-                    return false
-                end
-            --return false
-            else
-            return false
-            end
+
+         yawInput2 = yawInput2 - (yawAmount + (yawAmount - previousYawAmount) * dampingMultiplier)
+        --yawInput2 = yawAmount  * dampingMultiplier
+        previousYawAmount = yawAmount
+        previousPitchAmount = pitchAmount
+
+           
+        --system.print("yawInput2"..yawInput2)
+        --system.print("previousYawAmount"..previousYawAmount)
+        -- Return true or false depending on whether or not we're aligned
+        if math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
+            APisaligned = true
+            return true           
+        else 
+            APisaligned = false
+        return false
+        end
 end
 
 function ternary(cond, T, F)
@@ -722,7 +726,7 @@ function script.onFlush()
     local finalRollInput = utils.clamp(rollInput + rollInput2 + system.getControlDeviceYawInput(),-1,1)
     local finalYawInput = utils.clamp((yawInput + yawInput2) - system.getControlDeviceLeftRightInput(),-1,1)
     -- Axis
-    local worldVertical = vec3(core.getWorldVertical()) -- along gravity
+    worldVertical = vec3(core.getWorldVertical()) -- along gravity
     constructUp = vec3(core.getConstructWorldOrientationUp())
     constructForward = vec3(core.getConstructWorldOrientationForward())
     constructRight = vec3(core.getConstructWorldOrientationRight())
@@ -787,12 +791,12 @@ function script.onFlush()
         diff = targetAltitude - currentAltitude
 
         if atmosphere > 0.2 then
-            MaxSpeed = 1100
+            vMaxSpeed,hMaxSpeed = 1100
         else
-            MaxSpeed = 4000
+            vMaxSpeed = 4000
         end
 
-        targetSpeed = utils.clamp(diff, -MaxSpeed, MaxSpeed)
+        vTargetSpeed = utils.clamp(diff, -vMaxSpeed, vMaxSpeed)
 
         if
             math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and
@@ -805,13 +809,13 @@ function script.onFlush()
                 targetAltitude < currentAltitude and
                 math.abs(vSpeed) > 25 and
                 brakeDistance > math.abs((targetAltitude - currentAltitude))
-         then --math.abs(targetSpeed) < 5
-            --  elseif atmosphere == 0 and alt < 6000 and  math.abs(vSpeed) > MaxSpeed / 3.6 then --math.abs(targetSpeed) < 5
+         then --math.abs(vTargetSpeed) < 5
+            --  elseif atmosphere == 0 and alt < 6000 and  math.abs(vSpeed) > vMaxSpeed / 3.6 then --math.abs(vTargetSpeed) < 5
             --      finalBrakeInput = 1
             finalBrakeInput = 1
         elseif teledown > 0 and targetAltitude < currentAltitude and math.abs(vSpeed) > 10 then
             finalBrakeInput = 1
-            targetSpeed = 10
+            vTargetSpeed = 10
         else
             finalBrakeInput = brakeInput
         end
@@ -819,18 +823,18 @@ function script.onFlush()
         local power = 3
         local up_down_switch = 0
 
-        --system.print(targetSpeed)
+        --system.print(vTargetSpeed)
 
         if currentAltitude < targetAltitude then
             up_down_switch = -1
-            targetVelocity = (up_down_switch * targetSpeed / 3.6) * worldVertical
+            targetVelocity = (up_down_switch * vTargetSpeed / 3.6) * worldVertical
             stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
             Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
         end
 
         if currentAltitude > targetAltitude then
             up_down_switch = 1
-            targetVelocity = (up_down_switch * math.abs(targetSpeed) / 3.6) * worldVertical
+            targetVelocity = (up_down_switch * math.abs(vTargetSpeed) / 3.6) * worldVertical
             stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
             Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
         end
@@ -910,8 +914,8 @@ function script.onFlush()
         local lateralStrafeAcceleration =
             Nav.axisCommandManager:composeAxisAccelerationFromThrottle(lateralStrafeEngineTags, axisCommandId.lateral)
         Nav:setEngineForceCommand(lateralStrafeEngineTags, lateralStrafeAcceleration, keepCollinearity)
-    elseif (lateralCommandType == axisCommandType.byTargetSpeed) then
-        local lateralAcceleration = Nav.axisCommandManager:composeAxisAccelerationFromTargetSpeed(axisCommandId.lateral)
+    elseif (lateralCommandType == axisCommandType.byvTargetSpeed) then
+        local lateralAcceleration = Nav.axisCommandManager:composeAxisAccelerationFromvTargetSpeed(axisCommandId.lateral)
         autoNavigationEngineTags = autoNavigationEngineTags .. " , " .. lateralStrafeEngineTags
         autoNavigationAcceleration = autoNavigationAcceleration + lateralAcceleration
     end
@@ -942,40 +946,78 @@ function script.onFlush()
 end
 function script.onTick(timerId)
     if timerId == "tenthSecond" then
-        if APTarget ~= nil and apActive and not align then
+
+        local up = vec3(core.getWorldVertical()) * -1
+        local velocity = vec3(core.getWorldVelocity())
+        local vSpd = (velocity.x * up.x) + (velocity.y * up.y) + (velocity.z * up.z)
+        hSpd = velocity:len() - math.abs(vSpd)
+        local airFriction = vec3(core.getWorldAirFrictionAcceleration()) -- Maybe includes lift?
+        -- todo LastMaxBrake
+
+        brakeDistance, brakeTime = Kinematic.computeDistanceAndTime(hSpd, 0, constructMass(), 0, 0,
+        LastMaxBrake + vec3(core.getWorldAirFrictionAcceleration()):len() *
+            constructMass())
+        
+        local distanceToTarget = (vec3(core.getConstructWorldPos()) - targetPos):len()--APTarget:len() - APTarget:project_on(up):len() -- Probably not strictly accurate with curvature but it should work
+        system.print(distanceToTarget)
+
+        if not apActive then 
+        yawInput2 = 0
+        pitchInput2 = 0
+        end
+
+        if APTarget ~= nil and apActive  then
          -- not braking and not cruising
-          align = alignToWorldVector((APTarget - vec3(core.getConstructWorldPos())):normalize(),0.01)
-          distance = (vec3(core.getConstructWorldPos()) - APTarget):len()
-           -- if align then
-           --     yawInput2 = 0
-           --     rollInput2 = 0
-            --    pitchInput2 = 0
-            --end
+          x = alignToWorldVector((APTarget - vec3(core.getConstructWorldPos())):normalize())
+          distance = (vec3(core.getConstructWorldPos()) - APTarget):len()              
           
+          local vecdiff = vec3(targetPos) - vec3(core.getConstructWorldPos()) 
+          local altDiff = vecdiff:project_on(constructUp):len() * utils.sign(vecdiff:dot(constructUp))
+          targetAltitude = currentaltitude + altDiff
+          
+            if targetAltitude < 1100 and distance > 500 then
+                targetAltitude = 1100
+            end
+            if distance > 500 then
+                targetAltitude = currentaltitude + altDiff
+                finalBrakeInput = 0
+            end
+            if distance < 50 then
+                targetAltitude = currentaltitude + altDiff
+                finalBrakeInput = 1
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0.05)
+            end
+
+            hTargetSpeed = utils.clamp(distance, -1000,1000)
+
+            if (hSpd < hTargetSpeed) and APisaligned then
+                finalBrakeInput = 0
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0.05)
+            else
+                finalBrakeInput = 1
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
+            end
+            --Nav.axisCommandManager:setTargetSpeedCommand(axisCommandId.longitudinal, hTargetSpeed / 3.6)
+           
+            --stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
+            system.print("targetVelocity" .. hTargetSpeed)
+            --Nav:setEngineCommand("horizontal", stabilization - vec3(core.getWorldGravity()), vec3(), false)
+   
+
         end
     end
 end
 
 function script.onUpdate()
-    --system.print("hor" ..Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal))
-    --system.print("vert" .. Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical))
-    --current_max = 0
-    --currentvert_max = 0
-
     if vSpeedSigned == nil then
         vSpeed_hud = 0
     else
         vSpeed_hud = round(vSpeedSigned * 3.6, 0)
     end
 
-    --if vert_engine.getMaxThrust() == nil then
-    --    currentvert_max = 0
-    --else
-     --   currentvert_max = vert_engine.getMaxThrust()
-    --end
+    hSpd_hud = round(hSpd * 3.6, 0)
 
     currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
-
     currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
 
     local thrustbarneg = false
@@ -1008,15 +1050,14 @@ function script.onUpdate()
         startPositionAngle = 0
     end
 
-    local autolevel = ternary(level, '<div class="on"></div>', '<div class="off"></div>')
-
-    local isflipped = ternary(flip, '<div class="on"></div>', '<div class="off"></div>')
-
-    local isautoalt = ternary(autoalt, '<div class="on"></div>', '<div class="off"></div>')
-
     local braketoggle = finalBrakeInput > 0
 
-    local finalBrakeInputHud = ternary(braketoggle, '<div class="on"></div>', '<div class="off"></div>')
+    local autolevel = ternary(level, '<div class="on"></div>', '<div class="off"></div>')
+    local isflipped = ternary(flip, '<div class="on"></div>', '<div class="off"></div>')
+    local isautoalt = ternary(autoalt, '<div class="on"></div>', '<div class="off"></div>')
+    local isaligned = ternary(APisaligned, '<div class="on"></div>', '<div class="off"></div>')
+    local apActive_hud = ternary(apActive, '<div class="on"></div>', '<div class="off"></div>')
+    local finalBrakeInputHud = ternary(braketoggle, '<div class="on"></div>', '<div class="off"></div>')   
 
     local thrustbarcolor = "#2cb6d1"
     if thrustbarneg then
@@ -1027,10 +1068,14 @@ function script.onUpdate()
         <style>
         body {
         }
-        .zen {
-        display: flex;
-        flex-direction: column;
+        .row {
+            display: flex;
+            padding: 10px;
         }
+         .column {
+           flex: 50%;
+           padding: 10px;
+         }
         .controls-hud {
         display: flex;
         flex-direction: column;
@@ -1119,89 +1164,124 @@ function script.onUpdate()
      </style>]]
 
     html = [[        
-         <div class="zen">
-            <div class="controls-hud">
-               <div class="control-container">
-                  <p>Distance to Ground</p>
-                  ]] ..
-                  teledown ..
-                  [[ m
-               </div>
-               <div class="control-container">
-                  <p>Vertical Speed</p>
-                  ]] ..
-                  vSpeed_hud ..
-                  [[ km/h
-               </div>
-               <div class="control-container">
-                  <p>Braking</p>
-                  ]] ..
-                  finalBrakeInputHud ..
-                  [[
-               </div>
-               <div class="control-container">
-                  <p>Auto Level</p>
-                  ]] ..
-                  autolevel ..
-                  [[
-               </div>
-               <div class="control-container">
-                  <p>Auto Altitude</p>
-                  ]] ..
-                  isautoalt ..
-                  [[
-               </div>
-               <div class="control-container">
-                  <p>Target Alt</p>
-                  ]] ..
-                  targetAltitude ..
-                  " m" ..
-                  [[
-               </div>
-               <div class="control-container">
-                  <p>Current Alt</p>
-                  ]] ..
-                  currentaltitude ..
-                  " m" ..
-                  [[
-               </div>
-               <div class="control-container">
-                  <p>Base Alt</p>
-                  ]] ..
-                  initialAlt ..
-                  " m" ..
-                  [[
-               </div>
+         <div class="row">
+            <div class="column">
+                <h2>Basic</h2>
+                    <div class="controls-hud">
+                        <div class="control-container">
+                            <p>Distance to Ground</p>
+                            ]] ..
+                            teledown ..
+                            [[ m
+                        </div>
+                        <div class="control-container">
+                            <p>Vertical Speed</p>
+                            ]] ..
+                            vSpeed_hud ..
+                            [[ km/h
+                        </div>
+                        <div class="control-container">
+                            <p>Horizontal Speed</p>
+                            ]] ..
+                            hSpd_hud ..
+                            [[ km/h
+                        </div>                        
+                        <div class="control-container">
+                            <p>Braking</p>
+                            ]] ..
+                            finalBrakeInputHud ..
+                            [[
+                        </div>
+                        <div class="control-container">
+                            <p>Auto Level</p>
+                            ]] ..
+                            autolevel ..
+                            [[
+                        </div>
+                        <div class="control-container">
+                            <p>Auto Altitude</p>
+                            ]] ..
+                            isautoalt ..
+                            [[
+                        </div>
+                        <div class="control-container">
+                            <p>Current Alt</p>
+                            ]] ..
+                            currentaltitude ..
+                            " m" ..
+                            [[
+                        </div>
+                        <div class="control-container">
+                            <p>Target Alt</p>
+                            ]] ..
+                            targetAltitude ..
+                            " m" ..
+                            [[
+                        </div>                        
+                        <div class="control-container">
+                            <p>Base Alt</p>
+                            ]] ..
+                            initialAlt ..
+                            " m" ..
+                            [[
+                        </div>
+                    </div>
             </div>
          </div>
-         <div class="zen">
-            <div class="controls-hud">
-               <p>Horizontal Thrust</p>
-               <div id="horizontal">
-                  <div>]] ..
-                     currentthrust ..
-                     " %" ..
-                     [[
-                  </div>
-               </div>
-               <p>Vertical Thrust</p>
-               <div id="vertical">
-                  <div>]] ..
-                     currentvert ..
-                     " %" ..
-                     [[
-                  </div>
-               </div>
-               <p>Height Reached</p>
-               <div id="alt_diff">
-                  <div>]] ..
-                     deltaheight ..
-                     " %" ..
-                     [[
-                  </div>
-               </div>
+         <div class="row">
+            <div class="column">
+            <h2>Autopilot</h2>
+                <div class="controls-hud">
+                    <div class="control-container">
+                        <p>active</p>
+                        ]] ..
+                        apActive_hud ..
+                        [[
+                    </div>
+                    <div class="control-container">
+                        <p>aligned</p>
+                        ]] ..
+                        isaligned ..
+                        [[
+                    </div>
+                    <div class="control-container">
+                    <p>Distance to Ground</p>
+                    ]] ..
+                    teledown ..
+                    [[ m
+                    </div>
+                </div>
             </div>
-         </div>                  
+            <div class="column">
+            <h2>Thrust</h2>
+                <div class="controls-hud">
+                <p>Horizontal Thrust</p>
+                <div id="horizontal">
+                    <div>]] ..
+                        currentthrust ..
+                        " %" ..
+                        [[
+                    </div>
+                </div>
+                <p>Vertical Thrust</p>
+                <div id="vertical">
+                    <div>]] ..
+                        currentvert ..
+                        " %" ..
+                        [[
+                    </div>
+                </div>
+                <p>Height Reached</p>
+                <div id="alt_diff">
+                    <div>]] ..
+                        deltaheight ..
+                        " %" ..
+                        [[
+                    </div>
+                </div>
+                </div>
+            </div> 
+         </div>                
     ]]
     html = css .. html
     system.setScreen(html)
@@ -1212,10 +1292,10 @@ function script.onActionStart(action)
     if action == "brake" then
         brakeInput = brakeInput + 1
         local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
-        if (longitudinalCommandType == axisCommandType.byTargetSpeed) then
-            local targetSpeed = Nav.axisCommandManager:getTargetSpeed(axisCommandId.longitudinal)
-            if (math.abs(targetSpeed) > constants.epsilon) then
-                Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, - utils.sign(targetSpeed))
+        if (longitudinalCommandType == axisCommandType.byvTargetSpeed) then
+            local vTargetSpeed = Nav.axisCommandManager:getvTargetSpeed(axisCommandId.longitudinal)
+            if (math.abs(vTargetSpeed) > constants.epsilon) then
+                Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, - utils.sign(vTargetSpeed))
             end
         end
     elseif action == "forward" then
@@ -1274,7 +1354,9 @@ function script.onActionStart(action)
         level = not level
     elseif action == "option2" then
         autoalt = not autoalt
-    end
+    elseif action == "option4" then
+        apActive = not apActive
+       end
 end
 
 function script.onActionStop(action)
@@ -1337,10 +1419,10 @@ end
 function script.onActionLoop(action)
     if action == "brake" then
         local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
-        if (longitudinalCommandType == axisCommandType.byTargetSpeed) then
-            local targetSpeed = Nav.axisCommandManager:getTargetSpeed(axisCommandId.longitudinal)
-            if (math.abs(targetSpeed) > constants.epsilon) then
-                Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, - utils.sign(targetSpeed))
+        if (longitudinalCommandType == axisCommandType.byvTargetSpeed) then
+            local vTargetSpeed = Nav.axisCommandManager:getvTargetSpeed(axisCommandId.longitudinal)
+            if (math.abs(vTargetSpeed) > constants.epsilon) then
+                Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, - utils.sign(vTargetSpeed))
             end
         end
     elseif action == "forward" then
