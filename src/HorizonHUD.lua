@@ -1023,10 +1023,8 @@ function script.onUpdate()
         thrustbarcolor = "#F7901E"
     else
     end
-
-    html =
-        [[
-    <style>
+    css = [[
+        <style>
         body {
         }
         .zen {
@@ -1079,10 +1077,10 @@ function script.onUpdate()
         #horizontal>div {
         background-color: ]] ..
         thrustbarcolor ..
-            [[;    
+        [[;    
         width: ]] ..
-                math.abs(currentthrust) ..
-                    [[%; 
+        math.abs(currentthrust) ..
+        [[%; 
         height: 16px;
         border-radius: 10px;
         }
@@ -1094,8 +1092,8 @@ function script.onUpdate()
         #vertical>div {
         background-color: #2cb6d1;
         width: ]] ..
-                        currentvert ..
-                            [[%; 
+        currentvert ..
+        [[%; 
         height: 16px;
         border-radius: 10px;
         }
@@ -1109,104 +1107,103 @@ function script.onUpdate()
         #alt_diff>div {
         background-color: #2cb6d1;
         height: ]] ..
-                                deltaheight ..
-                                    [[%;  
+        deltaheight ..
+        [[%;  
         width: 16px;
         border-radius: 10px;
         position: relative;
         top: ]] ..
-                                        100 - deltaheight ..
-                                            [[%; 
+        100 - deltaheight ..
+        [[%; 
         }
+     </style>]]
 
-        </style>
-        <div class="zen">
-        <div class="controls-hud">
-            <div class="control-container">
-            <p>Distance to Ground</p>
-            ]] ..
-                                                teledown ..
-                                                    [[ m
-            </div>
-            <div class="control-container">
-            <p>Vertical Speed</p>
-            ]] ..
-                                                        vSpeed_hud ..
-                                                            [[ km/h
-            </div>
-
-            <div class="control-container">
-            <p>Braking</p>
-            ]] ..
-                                                                finalBrakeInputHud ..
-                                                                    [[
-            </div>
-            <div class="control-container">
-                <p>Auto Level</p>
-                ]] ..
-                                                                        autolevel ..
-                                                                            [[
-            </div>
-            <div class="control-container">
-                <p>Auto Altitude</p>
-                ]] ..
-                                                                                isautoalt ..
-                                                                                    [[
-            </div>
-
-
-            <div class="control-container">
-                <p>Target Alt</p>
-                ]] ..
-                                                                                        targetAltitude ..
-                                                                                            " m" ..
-                                                                                                [[
-            </div>
-            <div class="control-container">
-                <p>Current Alt</p>
-                ]] ..
-                                                                                                    currentaltitude ..
-                                                                                                        " m" ..
-                                                                                                            [[
-            </div>
-            <div class="control-container">
-                <p>Base Alt</p>
-                ]] ..
-                                                                                                                initialAlt ..
-                                                                                                                    " m" ..
-                                                                                                                        [[
-            </div>
-        </div>
-        </div>
-        <div class="zen">
+    html = [[        
+         <div class="zen">
             <div class="controls-hud">
-                <p>Horizontal Thrust</p>
-                    <div id="horizontal">
-                        <div>]] ..
-                                                                                                                            currentthrust ..
-                                                                                                                                " %" ..
-                                                                                                                                    [[</div>
-                    </div>
-                <p>Vertical Thrust</p>
-                    <div id="vertical">
-                        <div>]] ..
-                                                                                                                                        currentvert ..
-                                                                                                                                            " %" ..
-                                                                                                                                                [[</div>
-                    </div>
-                    <p>Height Reached</p>
-                    <div id="alt_diff">
-                <div>]] ..
-                                                                                                                                                    deltaheight ..
-                                                                                                                                                        " %" ..
-                                                                                                                                                            [[</div>                
+               <div class="control-container">
+                  <p>Distance to Ground</p>
+                  ]] ..
+                  teledown ..
+                  [[ m
+               </div>
+               <div class="control-container">
+                  <p>Vertical Speed</p>
+                  ]] ..
+                  vSpeed_hud ..
+                  [[ km/h
+               </div>
+               <div class="control-container">
+                  <p>Braking</p>
+                  ]] ..
+                  finalBrakeInputHud ..
+                  [[
+               </div>
+               <div class="control-container">
+                  <p>Auto Level</p>
+                  ]] ..
+                  autolevel ..
+                  [[
+               </div>
+               <div class="control-container">
+                  <p>Auto Altitude</p>
+                  ]] ..
+                  isautoalt ..
+                  [[
+               </div>
+               <div class="control-container">
+                  <p>Target Alt</p>
+                  ]] ..
+                  targetAltitude ..
+                  " m" ..
+                  [[
+               </div>
+               <div class="control-container">
+                  <p>Current Alt</p>
+                  ]] ..
+                  currentaltitude ..
+                  " m" ..
+                  [[
+               </div>
+               <div class="control-container">
+                  <p>Base Alt</p>
+                  ]] ..
+                  initialAlt ..
+                  " m" ..
+                  [[
+               </div>
             </div>
-
-        </div>  
-        </div>
-
+         </div>
+         <div class="zen">
+            <div class="controls-hud">
+               <p>Horizontal Thrust</p>
+               <div id="horizontal">
+                  <div>]] ..
+                     currentthrust ..
+                     " %" ..
+                     [[
+                  </div>
+               </div>
+               <p>Vertical Thrust</p>
+               <div id="vertical">
+                  <div>]] ..
+                     currentvert ..
+                     " %" ..
+                     [[
+                  </div>
+               </div>
+               <p>Height Reached</p>
+               <div id="alt_diff">
+                  <div>]] ..
+                     deltaheight ..
+                     " %" ..
+                     [[
+                  </div>
+               </div>
+            </div>
+         </div>                  
     ]]
-
+    html = css .. html
     system.setScreen(html)
     system.showScreen(1)
 end
