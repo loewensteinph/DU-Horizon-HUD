@@ -945,7 +945,7 @@ if debug then
 end
 
 function script.onStart()
-    VERSION_NUMBER = 0.002
+    VERSION_NUMBER = 0.500
     unit.setTimer("tenthSecond", 1/10)
     unit.setTimer("oneSecond", 1)
 end
@@ -1829,5 +1829,7 @@ function script.onInputText(text)
         msgText = "Target Altitude set to: '" .. arguement .. "'"
         system.print(msgText)
     end
+
+    
 end
 script.onStart()
