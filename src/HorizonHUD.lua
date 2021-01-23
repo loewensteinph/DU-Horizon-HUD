@@ -1584,39 +1584,7 @@ function script.onUpdate()
          [[
       </div>
    </div>
-   <h2>Autopilot</h2>
-   <div class="controls-hud">
-      <div class="control-container">
-         <p>active</p>
-         ]] ..
-         apActive_hud ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>aligned</p>
-         ]] ..
-         isaligned ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Distance to Ground</p>
-         ]] ..
-         teledown ..
-         [[ m
-      </div>
-      <div class="control-container">
-         <p>Distance to Target</p>
-         ]] ..
-         distance_hud ..
-         [[ m
-      </div>
-      <div class="control-container">
-         <p>Lockbrake</p>
-         ]] ..
-         braketoggle_hud ..
-         [[
-      </div>
-   </div>
+   
    <h2>Thrust</h2>
    <div class="controls-hud">
       <p>Horizontal Thrust</p>
@@ -1729,11 +1697,11 @@ function script.onActionStart(action)
     elseif action == "option2" then
         autoalt = not autoalt
     elseif action == "option4" then
-        apActive = not apActive
-        if lockBrake then 
-            lockBrake  = false 
-            brakeInput = 0
-        end
+        --apActive = not apActive
+        --if lockBrake then 
+        --    lockBrake  = false 
+        --    brakeInput = 0
+        --end
        end
 end
 
@@ -1860,30 +1828,6 @@ function script.onInputText(text)
         targetAltitude = arguement
         msgText = "Target Altitude set to: '" .. arguement .. "'"
         system.print(msgText)
-    end
-
-    if command == "/goto" then
-        if arguement == nil or arguement == "" or string.find(arguement, "::") == nil then
-            msgText = "Usage: /goto ::pos{0,2,46.4596,-155.1799,22.6572}"
-            return
-        end
-        i = string.find(arguement, "::")
-        local pos = string.sub(arguement, i)
-        local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
-        local posPattern = "::pos{" .. num .. "," .. num .. "," .. num .. "," .. num .. "," .. num .. "}"
-        local systemId, bodyId, latitude, longitude, altitude = string.match(pos, posPattern)
-        local planet = atlas[tonumber(systemId)][tonumber(bodyId)].name
-        system.print("planet:" .. planet .. " lat: " .. latitude .. " lon: " .. longitude .. " alt: " .. altitude)
-        targetPos = vec3(convertToWorldCoordinates(pos))
-        currentPos = vec3(core.getConstructWorldPos())
-
-        system.print(currentPos:__tostring())
-        system.print(targetPos:__tostring())
-        --atan2 = currentPos:angle_between(targetPos)
-        --system.print("angle:" .. atan2)
-        --distance = (vec3(core.getConstructWorldPos()) - targetPos):len()
-        --system.print("distance:" .. distance)      
-        APTarget = targetPos
     end
 end
 script.onStart()
