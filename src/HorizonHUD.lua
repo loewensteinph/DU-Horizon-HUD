@@ -11,10 +11,16 @@ brakeFlatFactor = 1 -- export: (Default: 1) When braking, this factor will incre
 pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
 pitchSpeedFactor = 0.8 -- export: (Default: 0.8) For keyboard control
 rollSpeedFactor = 1.5 -- export: (Default: 1.5) This factor will increase/decrease the player input along the roll axis<br>(higher value may be unstable)<br>Valid values: Superior or equal to 0.01
-dampingMultiplier = 70 -- export: (Default: 40) How strongly autopilot dampens when nearing the correct orientation
+statAtmosphericFuelTankHandling = 2 --export Piloting -> Atmospheric Flight Technician -> Atmospheric Fuel-Tank Handling
+statSpaceFuelTankHandling = 0 --export Piloting -> Atmospheric Engine Technician -> Space Fuel-Tank Handling
+statRocketFuelTankHandling = 0 --export (0-5) Enter the LEVEL OF YOUR PLACED FUEL ROCKET TANKS (from the builders talent "Piloting -> Rocket Scientist -> Rocket Booster Fuel Tank Handling")
+statContainerOptimization = 0 --export Stock Control -> Container Optimization
+statFuelTankOptimization = 0 --export Mining and Inventory -> Stock Control -> Fuel Tank Optimization
+
 -- VARIABLES TO BE SAVED GO HERE, SAVEABLE are Edit LUA Parameter settable, AUTO are ship status saves that occur over get up and sit down.
 local saveableVariables = { "yawSpeedFactor", "torqueFactor", "brakeSpeedFactor",
-                        "brakeFlatFactor", "pitchSpeedFactor","rollSpeedFactor","dampingMultiplier"}
+                        "brakeFlatFactor", "pitchSpeedFactor","rollSpeedFactor","dampingMultiplier","statAtmosphericFuelTankHandling",
+                    "statSpaceFuelTankHandling","statRocketFuelTankHandling","statContainerOptimization","statFuelTankOptimization"}
 -- Edit LUA Variable user settings.  Must be global to work with databank system as set up due to using _G assignment
 -- Auto Variable declarations that store status of ship. Must be global because they get saved/read to Databank due to using _G assignment
 local pitchInput = 0
@@ -24,14 +30,42 @@ local yawInput = 0
 local yawInput2 = 0
 local rollInput2 = 0
 local brakeInput = 0
+local brakeInput2 = 0
 local Kinematic = nil
 local hSpd = 0
 local vSpd = 0
-
+local targetVelocity = 0
+local vTargetSpeed = 0
+local up_down_switch = 0
+local teledown = 0
+altDiff = 0
+currentAltitude = 0
+speed_increment = 0
+throttle_increment = 0
+throttle_input = 0
+throttle_in = 0
 initialAlt = core.getAltitude()
 targetAltitude = core.getAltitude()
+currentAltitude = core.getAltitude()
+worldVertical = vec3(core.getWorldVertical()) -- along gravity
+constructUp = vec3(core.getConstructWorldOrientationUp())
+constructForward = vec3(core.getConstructWorldOrientationForward())
+constructRight = vec3(core.getConstructWorldOrientationRight())
+constructVelocity = vec3(core.getWorldVelocity())
+-- container stuff
+typeElements = {}
+fuelAtmosphericTanks = {}
+fuelSpaceTanks = {}
+fuelRocketTanks = {}
+-- hud container stuff
+fuelTanksDisplay = {}
+--statics
+weightAtmosphericFuel = 4
+weightSpaceFuel = 6
+weightRocketFuel = 0.8
 
-
+-- Testing Purpose
+debug = false
 apActive = false
 
 -- function localizations for improved performance when used frequently or in loops.
@@ -39,6 +73,8 @@ local atmosphere = unit.getAtmosphereDensity
 local constructMass = core.getConstructMass
 
 -- AP Stuff
+targetPos = vec3()
+currentPos = vec3()
 lockBrake = false 
 brakeDistance = 0
 vMaxSpeed = 0
@@ -47,11 +83,12 @@ previousYawAmount = 0
 previousPitchAmount = 0
 pitchAmount = 0
 local autopilotStrength = 0.2 -- How strongly autopilot tries to point at a target
-local alignmentTolerance = 0.021 -- How closely it must align to a planet before accelerating to it
+local alignmentTolerance = 0.05 -- How closely it must align to a planet before accelerating to it
 local minimumRateOfChange = math.cos(30*constants.deg2rad) -- Adjust 30 which is taken from stall angle
 APTarget = nil
 APisaligned = false
-
+APthrust = 0
+APspeedincrement = 0
 -- flight automation options
 level = true -- Alt 1 - Autolevel only allow yaw
 flip = false -- not used yet
@@ -65,6 +102,202 @@ if 1 == 1 then
     system.lockView(1)
 end
 
+-- contaienr info
+function setContainerInfo()
+    typeElements = {}
+    fuelAtmosphericTanks = {}
+    fuelSpaceTanks = {}
+    fuelRocketTanks = {}
+    elementsIdList = core.getElementIdList()
+    elementCounter = 0
+    fuelAtmosphericCurrent = 0
+    fuelAtmosphericTotal = 0
+    fuelSpaceCurrent = 0
+    fuelSpaceTotal = 0
+    fuelRocketCurrent = 0
+    fuelRocketTotal = 0
+
+    for i, id in pairs(elementsIdList) do
+        elementCounter = elementCounter + 1
+        local idType = core.getElementTypeById(id)
+        if idType == "Atmospheric Fuel Tank" or idType == "Space Fuel Tank" or idType == "Rocket Fuel Tank" then
+            --system.print(id)
+            table.insert(typeElements, id)
+        --id)
+        end
+    end
+    for i, id in ipairs(typeElements) do
+        local idName = core.getElementNameById(id) or ""
+        local idType = core.getElementTypeById(id) or ""
+        -- local idTypeClean = idType:gsub("[%s%-]+", ""):lower()
+        local idPos = core.getElementPositionById(id) or 0
+        local idHP = core.getElementHitPointsById(id) or 0
+        local idMaxHP = core.getElementMaxHitPointsById(id) or 0
+        local idMass = core.getElementMassById(id) or 0
+        local baseSize = ""
+        local baseVol = 0
+        local baseMass = 0
+        local cMass = 0
+        local cVol = 0
+        if idType == "Atmospheric Fuel Tank" then
+            if idMaxHP > 10000 then
+                baseSize = "L"
+                baseMass = 5480
+                baseVol = 12800
+            elseif idMaxHP > 1300 then
+                baseSize = "M"
+                baseMass = 988.67
+                baseVol = 1600
+            elseif idMaxHP > 150 then
+                baseSize = "S"
+                baseMass = 182.67
+                baseVol = 400
+            else
+                baseSize = "XS"
+                baseMass = 35.03
+                baseVol = 100
+            end
+            if statAtmosphericFuelTankHandling > 0 then
+                baseVol = 0.2 * statAtmosphericFuelTankHandling * baseVol + baseVol
+            end
+            cMass = idMass - baseMass
+            if cMass <= 10 then
+                cMass = 0
+            end
+            cVol = string.format("%.0f", cMass / weightAtmosphericFuel)
+            cPercent = string.format("%.1f", math.floor(100 / baseVol * tonumber(cVol)))
+            table.insert(
+                fuelAtmosphericTanks,
+                {
+                    type = 1,
+                    id = id,
+                    name = idName,
+                    maxhp = idMaxHP,
+                    pos = idPos,
+                    size = baseSize,
+                    mass = baseMass,
+                    vol = baseVol,
+                    cvol = cVol,
+                    percent = cPercent
+                }
+            )
+            if idHP > 0 then
+                fuelAtmosphericCurrent = fuelAtmosphericCurrent + cVol
+            end
+            fuelAtmosphericTotal = fuelAtmosphericTotal + baseVol
+        elseif idType == "Space Fuel Tank" then
+            if idMaxHP > 10000 then
+                baseSize = "L"
+                baseMass = 5480
+                baseVol = 12800
+            elseif idMaxHP > 1300 then
+                baseSize = "M"
+                baseMass = 988.67
+                baseVol = 1600
+            else
+                baseSize = "S"
+                baseMass = 182.67
+                baseVol = 400
+            end
+            if statSpaceFuelTankHandling > 0 then
+                baseVol = 0.2 * statSpaceFuelTankHandling * baseVol + baseVol
+            end
+            cMass = idMass - baseMass
+            if cMass <= 10 then
+                cMass = 0
+            end
+            cVol = string.format("%.0f", cMass / weightSpaceFuel)
+            cPercent = string.format("%.1f", (100 / baseVol * tonumber(cVol)))
+            table.insert(
+                fuelSpaceTanks,
+                {
+                    type = 2,
+                    id = id,
+                    name = idName,
+                    maxhp = idMaxHP,
+                    pos = idPos,
+                    size = baseSize,
+                    mass = baseMass,
+                    vol = baseVol,
+                    cvol = cVol,
+                    percent = cPercent
+                }
+            )
+            if idHP > 0 then
+                fuelSpaceCurrent = fuelSpaceCurrent + cVol
+            end
+            fuelSpaceTotal = fuelSpaceTotal + baseVol
+        elseif idType == "Rocket Fuel Tank" then
+            if idMaxHP > 65000 then
+                baseSize = "L"
+                baseMass = 25740
+                baseVol = 50000
+            elseif idMaxHP > 6000 then
+                baseSize = "M"
+                baseMass = 4720
+                baseVol = 6400
+            elseif idMaxHP > 700 then
+                baseSize = "S"
+                baseMass = 886.72
+                baseVol = 800
+            else
+                baseSize = "XS"
+                baseMass = 173.42
+                baseVol = 400
+            end
+            if statRocketFuelTankHandling > 0 then
+                baseVol = 0.2 * statRocketFuelTankHandling * baseVol + baseVol
+            end
+            cMass = idMass - baseMass
+            if cMass <= 10 then
+                cMass = 0
+            end
+            cVol = string.format("%.0f", cMass / weightRocketFuel)
+            cPercent = string.format("%.1f", (100 / baseVol * tonumber(cVol)))
+            table.insert(
+                fuelRocketTanks,
+                {
+                    type = 3,
+                    id = id,
+                    name = idName,
+                    maxhp = idMaxHP,
+                    pos = idPos,
+                    size = baseSize,
+                    mass = baseMass,
+                    vol = baseVol,
+                    cvol = cVol,
+                    percent = cPercent
+                }
+            )
+            if idHP > 0 then
+                fuelRocketCurrent = fuelRocketCurrent + cVol
+            end
+            fuelRocketTotal = fuelRocketTotal + baseVol
+        end
+    end
+end           
+
+function setContainerDisplayInfo()
+    fuelTanksDisplay = {}
+
+    for _,v in ipairs(fuelAtmosphericTanks) do
+        table.insert(fuelTanksDisplay, v)
+    end
+    for _,v in ipairs(fuelSpaceTanks) do
+        table.insert(fuelTanksDisplay, v)
+    end
+    for _,v in ipairs(fuelRocketTanks) do
+        table.insert(fuelTanksDisplay, v)
+    end
+    table.sort(fuelTanksDisplay, function(a,b) return a.type<b.type or (a.type == b.type and a.id<b.id) end)
+end    
+
+function lockBrakeToggle()
+    -- Toggle brakes
+    lockBrake = not lockBrake
+    if lockBrake then
+    end
+end
 -- Planet Info - https://gitlab.com/JayleBreak/dualuniverse/-/tree/master/DUflightfiles/autoconf/custom with minor modifications
 function Atlas()
     return {
@@ -508,6 +741,10 @@ function Atlas()
 end
 
 atlas = Atlas()
+
+setContainerInfo()
+setContainerDisplayInfo()
+
 -- Function Definitions
 function getMagnitudeInDirection(vector, direction)
     vector = vec3(vector)
@@ -542,31 +779,33 @@ function alignToWorldVector(vector, tolerance)
         if tolerance == nil then
             tolerance = alignmentTolerance
         end
-        vector = vec3(vector):normalize()
-        local targetVec = (vec3(core.getConstructWorldOrientationForward()) - vector)
-        local yawdiff = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationRight())
-
-        local autopilotYawStrength = autopilotStrength 
         
-        autopilotYawStrength = utils.clamp(autopilotYawStrength,math.abs(yawdiff),autopilotStrength)
-        
-        local yawAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationRight()) *
-                                    autopilotYawStrength
-        local pitchAmount = -getMagnitudeInDirection(targetVec, core.getConstructWorldOrientationUp()) *
-                                autopilotStrength
+        local APTargetReleativePos = (APTarget - vec3(core.getConstructWorldPos()))
+        local APTargetYaw = APTargetReleativePos:project_on_plane(constructUp)
+        local APTargetAngle = APTargetYaw:angle_between(constructForward)
+        local rightAngle = APTargetYaw:angle_between(constructRight)
+        if (rightAngle * constants.rad2deg) < 90 then
+            APTargetAngle = -APTargetAngle
+        end
 
-         yawInput2 = - yawAmount
+            local APYawPID = pid.new(1, 0, 5)
+            APYawPID:inject(APTargetAngle)
+            yawInput2 = APYawPID:get()
+         --yawInput2 = - yawAmount
         
          if not APisaligned then
-            system.print("AP is aligning...")
+
          end
         --system.print("yawInput2"..yawInput2)
         --system.print("previousYawAmount"..previousYawAmount)
         -- Return true or false depending on whether or not we're aligned
-        if math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
+        if math.abs(APTargetAngle) * constants.rad2deg < math.min(tolerance,alignmentTolerance) then--math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
             APisaligned = true
+            yawInput2 = 0
             return true           
         else 
+            --system.print("AP is aligning...")
+            --system.print("APTargetAngle..." .. APTargetAngle * constants.rad2deg)
             APisaligned = false
         return false
         end
@@ -580,6 +819,9 @@ function ternary(cond, T, F)
     end
 end
 function round(num, numDecimalPlaces)
+    if num == nil then num = 0 
+        return 0
+    end
     local mult = 10 ^ (numDecimalPlaces or 0)
     if numDecimalPlaces ~= nil then
         return math.floor(num * mult + 0.5) / mult
@@ -684,12 +926,12 @@ function Kinematics()
     return Kinematic
 end
 
--- Testing Purpose
-debug = true
+
 
 if debug then
-
-    local input = "::pos{0,2,44.7416,98.8891,296.1514}"
+    --local input = "::pos{0,2,44.7416,98.8891,296.1514}"
+    --local input = "::pos{0,2,44.7194,98.8856,311.8763}"
+    local input = "::pos{0,2,44.7129,98.8818,276.8629}"
     i = string.find(input, "::")
     local pos = string.sub(input, i)
     local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
@@ -705,6 +947,7 @@ end
 function script.onStart()
     VERSION_NUMBER = 0.002
     unit.setTimer("tenthSecond", 1/10)
+    unit.setTimer("oneSecond", 1)
 end
 function script.onFlush()
 
@@ -721,6 +964,9 @@ function script.onFlush()
     stabilization = 0
 
     currentAltitude = core.getAltitude()
+    if currentAltitude == nil then
+        currentAltitude = 0
+    end
     -- final inputs
     local finalPitchInput = utils.clamp(pitchInput + pitchInput2 + system.getControlDeviceForwardInput(),-1,1)
     local finalRollInput = utils.clamp(rollInput + rollInput2 + system.getControlDeviceYawInput(),-1,1)
@@ -742,10 +988,6 @@ function script.onFlush()
     local targetAngularVelocity =
         finalPitchInput * pitchSpeedFactor * constructRight + finalRollInput * rollSpeedFactor * constructForward +
             finalYawInput * yawSpeedFactor * constructUp
-
-    finalBrakeInput = brakeInput
-
-    if lockBrake then brakeInput = 1 end
 
     if not level then
         targetAngularVelocity =
@@ -786,10 +1028,6 @@ function script.onFlush()
 
          --initialAlt + vecDiff:project_on(constructUp):len() * utils.sign(vecDiff:dot(constructUp))
          
-        if currentAltitude == nil then
-            currentAltitude = 0
-        end
-
         diff = targetAltitude - currentAltitude
 
         if atmosphere > 0.2 then
@@ -890,6 +1128,8 @@ function script.onFlush()
         tolerancePercentToSkipOtherPriorities
     )
 
+    finalBrakeInput = brakeInput + brakeInput2
+
     -- Brakes
     local brakeAcceleration =
         -finalBrakeInput * (brakeSpeedFactor * constructVelocity + brakeFlatFactor * constructVelocityDir)
@@ -947,83 +1187,128 @@ end
 function script.onTick(timerId)
     if timerId == "tenthSecond" then
 
+        if lockBrake then
+            brakeInput2 = 1
+        else brakeInput2 = 0                     
+        end
+
         local up = vec3(core.getWorldVertical()) * -1
         local velocity = vec3(core.getWorldVelocity())
         local vSpd = (velocity.x * up.x) + (velocity.y * up.y) + (velocity.z * up.z)
         hSpd = velocity:len() - math.abs(vSpd)
         local airFriction = vec3(core.getWorldAirFrictionAcceleration()) -- Maybe includes lift?
         -- todo LastMaxBrake
-
         brakeDistance, brakeTime = Kinematic.computeDistanceAndTime(hSpd, 0, constructMass(), 0, 0,
         LastMaxBrake + vec3(core.getWorldAirFrictionAcceleration()):len() *
-            constructMass())
-        
-        local distanceToTarget = (vec3(core.getConstructWorldPos()) - targetPos):len()--APTarget:len() - APTarget:project_on(up):len() -- Probably not strictly accurate with curvature but it should work
-        system.print(distanceToTarget)
-
-
-        system.print("brakeDistance" .. brakeDistance) 
---system.print("brakeTime" .. brakeTime) 
-
+            constructMass())      
 
         if not apActive then 
-            lockBrake = false 
             yawInput2 = 0
             pitchInput2 = 0
+            lockBrake = false    
+            speedincrement = 0
+            APthrust = 0
+        end
+
+
+        --system.print("brakeInput: " .. brakeInput) 
+        --system.print("brakeInput2: " .. brakeInput2) 
+        --system.print("lockBrake:" ..(lockBrake and 'true' or 'false') )
+        
+        if debug then
+        end
+        
+
+        if APTarget ~= nil then
+            distance3d = (vec3(core.getConstructWorldPos()) - APTarget):len()            
+            local cwg = vec3(core.getConstructWorldPos())
+
+           local APTargetReleativePos = (APTarget - vec3(core.getConstructWorldPos()))
+           APTargetYaw = APTargetReleativePos:project_on_plane(constructUp)
+           APTargetAngle= APTargetYaw:angle_between(constructForward)
+           local rightAngle= APTargetYaw:angle_between(constructRight)
+           if (rightAngle * constants.rad2deg) < 90 then
+            APTargetAngle = -APTargetAngle
+            end
+
+            local horizonForward = APTarget:project_on_plane(cwg)
+            distance = horizonForward:len()
+           -- distance = (vec3(core.getConstructWorldPos()) - APTarget):project_on(vec3(core.getConstructWorldOrientationUp())):len()
+
+            local targetVector = (vec3(core.getConstructWorldPos()) - APTarget)
+            altDiff = (APTarget - vec3(core.getConstructWorldPos())):project_on(vec3(core.getConstructWorldOrientationUp())):len()
+            
+
+           -- local distance = targetVector:len() - verticalAmount
+
+            --horizonUp = APTarget:project_on_plane(constructUp)
+            --system.print("angle:" .. APTargetAngle * constants.rad2deg) --* constants.rad2deg)
         end
 
         if APTarget ~= nil and apActive  then
-            -- not braking and not cruising
-             x = alignToWorldVector((APTarget - vec3(core.getConstructWorldPos())):normalize())
-             distance = (vec3(core.getConstructWorldPos()) - APTarget):len()              
+
+            system.print("altDiff"..altDiff)
+            system.print("targetAltitude" .. targetAltitude)
+            targetAltitude = currentAltitude + altDiff
+
+            if currentAltitude == nil then
+                currentAltitude = core.getAltitude()
+            end
+
+             if distance > 1 then
+                x = alignToWorldVector(APTarget)
+             end
+             
+             if (brakeDistance * 2.5 > distance) then 
+                lockBrake = true    
+                APspeedincrement = 0
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
+            else
+                  lockBrake = false    
+            end
+
              if not APisaligned then
                 lockBrake = true                 
              else
                 lockBrake = false
              end
 
-             local vecdiff = vec3(targetPos) - vec3(core.getConstructWorldPos()) 
-             local altDiff = vecdiff:project_on(constructUp):len() * utils.sign(vecdiff:dot(constructUp))
-             
-             targetAltitude = currentaltitude + altDiff
-                if brakeDistance * 3.6 > distance then 
-                    system.print("BRAKE...")
-                    lockBrake = true    
-                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
-                else
-                    system.print("NOOOOO BRAKE...")
-                      lockBrake = false    
-                end
-
-               if targetAltitude < 1100 and distance > 500 then
+               if targetAltitude < 1100 and distance > 1100 then
                    targetAltitude = 1100
                end
-               if distance > 500 then
-                   targetAltitude = currentaltitude + altDiff
-                   finalBrakeInput = 0
-               end
-               if distance < 50 then
-                   --targetAltitude = currentaltitude + altDiff
-                   --finalBrakeInput = 1
-                  -- Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0.01)
-               end
-   
+
+               if targetAltitude < 1100 and distance < 1100 then
+                --targetAltitude = utils.clamp(targetAltitude, lowAlt,highAlt)
+              end
+
                hTargetSpeed = utils.clamp(distance, -1000,1000)
   
                if (hSpd * 3.6 < hTargetSpeed) and APisaligned then
-                   Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0.05)
+                    APspeedincrement = APspeedincrement + 0.01
+                    local APthrust = APthrust + APspeedincrement
+                   Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, APthrust)
                else
                    Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
                end
-               
-               --stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
-               system.print("Velocity" .. hSpd)
-               --Nav:setEngineCommand("horizontal", stabilization - vec3(core.getWorldGravity()), vec3(), false)
-      
-   
+               system.print("Distance...".. distance)
+               if distance < 5 and hSpd < 1 then
+    
+                lockBrake = true  
+                targetAltitude = currentAltitude + altDiff
+                 
+                APspeedincrement = 0
+                APthrust = 0
+                yawInput2 = 0
+
+              end
            end
        end
-   end
+       if timerId == "oneSecond" then
+        setContainerInfo()
+        setContainerDisplayInfo()                     
+       end
+   
+end
 
 function script.onUpdate()
 
@@ -1035,9 +1320,8 @@ function script.onUpdate()
 
     hSpd_hud = round(hSpd * 3.6, 0)
 
-    currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
-    currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
-
+    local currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
+    local currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
     local thrustbarneg = false
 
     if currentthrust < 0 then
@@ -1051,59 +1335,119 @@ function script.onUpdate()
         targetAltitude = 0
     end    
 
-    currentaltitude = round(currentAltitude, 2)
-    targetAltitude = round(targetAltitude, 2)
-    initialAlt = round(initialAlt, 2)
+    local currentAltitude_hud = round(currentAltitude, 2)
+    local targetAltitude_hud = round(targetAltitude, 2)
+    local initialAlt_hud = round(initialAlt, 2)
+    local distance_hud = round(distance,2)
 
     deltaheight =
         round(
-        math.min(math.abs(currentAltitude), math.abs(targetAltitude)) /
-            math.max(math.abs(currentAltitude), math.abs(targetAltitude)),
+        math.min(math.abs(currentAltitude_hud), math.abs(targetAltitude_hud)) /
+            math.max(math.abs(currentAltitude_hud), math.abs(targetAltitude_hud)),
         2
     ) * 100
 
-    teledown = round(tele_down.getDistance(), 0)
+    local teledown = round(tele_down.getDistance(), 0)
 
     if startPositionAngle == nil then
         startPositionAngle = 0
     end
 
-    local braketoggle = finalBrakeInput > 0
+    local braketoggle = brakeInput + brakeInput2  > 0
 
     local autolevel = ternary(level, '<div class="on"></div>', '<div class="off"></div>')
     local isflipped = ternary(flip, '<div class="on"></div>', '<div class="off"></div>')
     local isautoalt = ternary(autoalt, '<div class="on"></div>', '<div class="off"></div>')
     local isaligned = ternary(APisaligned, '<div class="on"></div>', '<div class="off"></div>')
     local apActive_hud = ternary(apActive, '<div class="on"></div>', '<div class="off"></div>')
-    local finalBrakeInputHud = ternary(braketoggle, '<div class="on"></div>', '<div class="off"></div>')   
+    local brakeInput_hud = ternary(braketoggle, '<div class="on"></div>', '<div class="off"></div>')   
+    local braketoggle_hud = ternary(lockBrake, '<div class="on"></div>', '<div class="off"></div>')  
+
+    local htmlTankInfo = ""
+    local cssTankInfo = ""
+    for key,value in pairs(fuelTanksDisplay) do 
+        local tank = value
+        local tankPercent = 0
+        local tankColor = ""
+        local fuelType = ""
+
+        if tank.type == 1 then
+            tankColor = "LightSkyBlue"
+            fuelType = "Atmo " .. tank.size
+        elseif tank.type == 2 then
+            tankColor = "Crimson"
+            fuelType = "Space " .. tank.size
+        elseif tank.type == 3 then
+            tankColor = "BlueViolet"
+            fuelType = "Rocket " .. tank.size
+        end
+        if tank.percent == nil then
+            tankPercent = 0
+        else
+            tankPercent = tank.percent
+        end
+        local htmlSegment = [[<p>]]..fuelType..[[</p>
+         <div id="fuel_]]..key..[[">
+         <div><p>]] ..
+         tankPercent ..
+            [[</p>
+         </div>
+      </div> ]] 
+      htmlTankInfo = htmlTankInfo .. htmlSegment
+      local cssSegment = [[#fuel_]]..key..[[ {
+        background-color: #20201F;
+        border-radius: 20px; /* (heightOfInnerDiv / 2) + padding */
+        padding: 4px;
+        }
+        #fuel_]]..key..[[>div {
+        background-color: ]] .. tankColor .. [[;    
+        width: ]] ..
+        tankPercent ..
+        [[%; 
+        height: 24px;
+        border-radius: 10px;
+        }]]
+        cssTankInfo = cssTankInfo .. cssSegment
+    end
 
     local thrustbarcolor = "#2cb6d1"
     if thrustbarneg then
         thrustbarcolor = "#F7901E"
     else
     end
-    css = [[
+    local css = [[
         <style>
         body {
         }
         .row {
             display: flex;
+            justify-content: space-between;
             padding: 10px;
+            flex-direction: row;
         }
          .column {
-           flex: 50%;
+           width: 30%;
            padding: 10px;
          }
         .controls-hud {
         display: flex;
         flex-direction: column;
-        justify-content: space-around;
         border-color: #333333;
         border-radius: 12px;
-        width: 20%;
+        width: 35%;
         padding: 1% 1.5%;
         overflow: none;
         }
+        .controls-hud-right {
+            display: flex;
+            flex-direction: column;
+            border-color: #333333;
+            border-radius: 12px;
+            width: 35%;
+            padding: 1% 1.5%;
+            overflow: none;
+            padding-top: 50%
+            }
         p {
         font-size: 20px;  
         font-weight: 300;
@@ -1144,9 +1488,11 @@ function script.onUpdate()
         width: ]] ..
         math.abs(currentthrust) ..
         [[%; 
-        height: 16px;
+        height: 20px;
         border-radius: 10px;
-        }
+        }]]
+        .. cssTankInfo ..
+        [[
         #vertical {
         background-color: #20201F;
         border-radius: 20px; /* (heightOfInnerDiv / 2) + padding */
@@ -1181,126 +1527,133 @@ function script.onUpdate()
         }
      </style>]]
 
-    html = [[        
-         <div class="row">
-            <div class="column">
-                <h2>Basic</h2>
-                    <div class="controls-hud">
-                        <div class="control-container">
-                            <p>Distance to Ground</p>
-                            ]] ..
-                            teledown ..
-                            [[ m
-                        </div>
-                        <div class="control-container">
-                            <p>Vertical Speed</p>
-                            ]] ..
-                            vSpeed_hud ..
-                            [[ km/h
-                        </div>
-                        <div class="control-container">
-                            <p>Horizontal Speed</p>
-                            ]] ..
-                            hSpd_hud ..
-                            [[ km/h
-                        </div>                        
-                        <div class="control-container">
-                            <p>Braking</p>
-                            ]] ..
-                            finalBrakeInputHud ..
-                            [[
-                        </div>
-                        <div class="control-container">
-                            <p>Auto Level</p>
-                            ]] ..
-                            autolevel ..
-                            [[
-                        </div>
-                        <div class="control-container">
-                            <p>Auto Altitude</p>
-                            ]] ..
-                            isautoalt ..
-                            [[
-                        </div>
-                        <div class="control-container">
-                            <p>Current Alt</p>
-                            ]] ..
-                            currentaltitude ..
-                            " m" ..
-                            [[
-                        </div>
-                        <div class="control-container">
-                            <p>Target Alt</p>
-                            ]] ..
-                            targetAltitude ..
-                            " m" ..
-                            [[
-                        </div>                        
-                        <div class="control-container">
-                            <p>Base Alt</p>
-                            ]] ..
-                            initialAlt ..
-                            " m" ..
-                            [[
-                        </div>
-                    </div>
-            </div>
+     local html = [[        
+<div class="row">
+<div class="column">
+   <h2>Basic</h2>
+   <div class="controls-hud">
+      <div class="control-container">
+         <p>Vertical Speed</p>
+         ]] ..
+         vSpeed_hud ..
+         [[ km/h
+      </div>
+      <div class="control-container">
+         <p>Horizontal Speed</p>
+         ]] ..
+         hSpd_hud ..
+         [[ km/h
+      </div>
+      <div class="control-container">
+         <p>Braking</p>
+         ]] ..
+         brakeInput_hud ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Auto Level</p>
+         ]] ..
+         autolevel ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Auto Altitude</p>
+         ]] ..
+         isautoalt ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Current Alt</p>
+         ]] ..
+         currentAltitude_hud ..
+         " m" ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Target Alt</p>
+         ]] ..
+         targetAltitude_hud ..
+         " m" ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Base Alt</p>
+         ]] ..
+         initialAlt_hud ..
+         " m" ..
+         [[
+      </div>
+   </div>
+   <h2>Autopilot</h2>
+   <div class="controls-hud">
+      <div class="control-container">
+         <p>active</p>
+         ]] ..
+         apActive_hud ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>aligned</p>
+         ]] ..
+         isaligned ..
+         [[
+      </div>
+      <div class="control-container">
+         <p>Distance to Ground</p>
+         ]] ..
+         teledown ..
+         [[ m
+      </div>
+      <div class="control-container">
+         <p>Distance to Target</p>
+         ]] ..
+         distance_hud ..
+         [[ m
+      </div>
+      <div class="control-container">
+         <p>Lockbrake</p>
+         ]] ..
+         braketoggle_hud ..
+         [[
+      </div>
+   </div>
+   <h2>Thrust</h2>
+   <div class="controls-hud">
+      <p>Horizontal Thrust</p>
+      <div id="horizontal">
+         <div>]] ..
+            currentthrust ..
+            " %" ..
+            [[
          </div>
-         <div class="row">
-            <div class="column">
-            <h2>Autopilot</h2>
-                <div class="controls-hud">
-                    <div class="control-container">
-                        <p>active</p>
-                        ]] ..
-                        apActive_hud ..
-                        [[
-                    </div>
-                    <div class="control-container">
-                        <p>aligned</p>
-                        ]] ..
-                        isaligned ..
-                        [[
-                    </div>
-                    <div class="control-container">
-                    <p>Distance to Ground</p>
-                    ]] ..
-                    teledown ..
-                    [[ m
-                    </div>
-                </div>
-            </div>
-            <div class="column">
-            <h2>Thrust</h2>
-                <div class="controls-hud">
-                <p>Horizontal Thrust</p>
-                <div id="horizontal">
-                    <div>]] ..
-                        currentthrust ..
-                        " %" ..
-                        [[
-                    </div>
-                </div>
-                <p>Vertical Thrust</p>
-                <div id="vertical">
-                    <div>]] ..
-                        currentvert ..
-                        " %" ..
-                        [[
-                    </div>
-                </div>
-                <p>Height Reached</p>
-                <div id="alt_diff">
-                    <div>]] ..
-                        deltaheight ..
-                        " %" ..
-                        [[
-                    </div>
-                </div>
-                </div>
-            </div> 
-         </div>                
-    ]]
+      </div>
+      <p>Vertical Thrust</p>
+      <div id="vertical">
+         <div>]] ..
+            currentvert ..
+            " %" ..
+            [[
+         </div>
+      </div>
+      <p>Height Reached</p>
+      <div id="alt_diff">
+         <div>]] ..
+            deltaheight ..
+            " %" ..
+            [[
+         </div>
+      </div>
+   </div>
+</div>
+<div class="column">
+   <div class="controls-hud-right">
+   <h2>Fuel</h2>
+      ]] .. htmlTankInfo ..[[
+   </div>
+</div>
+</div>
+</div>]]
+
     html = css .. html
     system.setScreen(html)
     system.showScreen(1)
@@ -1318,15 +1671,18 @@ function script.onActionStart(action)
         end
     elseif action == "forward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 1.0)
-            increment = 0.125
+            --Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 1)
         else
         pitchInput = pitchInput - 1
         end 
+
+
+    elseif action == "speedup" then
+        Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
+        throttle_increment = 0
     elseif action == "backward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -1.0)
-            increment = 0.125
+            --Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -1)
         else
         pitchInput = pitchInput + 1
         end    
@@ -1374,6 +1730,10 @@ function script.onActionStart(action)
         autoalt = not autoalt
     elseif action == "option4" then
         apActive = not apActive
+        if lockBrake then 
+            lockBrake  = false 
+            brakeInput = 0
+        end
        end
 end
 
@@ -1382,15 +1742,11 @@ function script.onActionStop(action)
         brakeInput = brakeInput - 1
     elseif action == "forward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
-            increment = 0.125
         else
         pitchInput = pitchInput + 1
         end
     elseif action == "backward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
-            increment = 0.125
         else
         pitchInput = pitchInput - 1
         end    
@@ -1436,24 +1792,22 @@ end
 
 function script.onActionLoop(action)
     if action == "brake" then
-        local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
-        if (longitudinalCommandType == axisCommandType.byvTargetSpeed) then
-            local vTargetSpeed = Nav.axisCommandManager:getvTargetSpeed(axisCommandId.longitudinal)
-            if (math.abs(vTargetSpeed) > constants.epsilon) then
-                Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, - utils.sign(vTargetSpeed))
-            end
-        end
     elseif action == "forward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.longitudinal, 0.0)
-            increment = 0.125
+            throttle_increment = throttle_increment + 0.01
+            --system.print("actionLoop forward".. math.abs(throttle_input))          
+            local throttle_input = throttle_input + throttle_increment
+           Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
+           
         else
         --pitchInput = pitchInput + 1
-        end
+        end       
     elseif action == "backward" then
         if level then
-            Nav.axisCommandManager:updateCommandFromActionLoop(axisCommandId.longitudinal, -2 * increment)
-            increment =  increment + 0.125
+            throttle_increment = throttle_increment - 0.01
+            local throttle_input = throttle_input + throttle_increment
+            Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
+            --system.print("actionLoop backward".. math.abs(throttle_input))
         else
         --pitchInput = pitchInput - 1
         end
