@@ -16,6 +16,8 @@ statSpaceFuelTankHandling = 0 --export Piloting -> Atmospheric Engine Technician
 statRocketFuelTankHandling = 0 --export (0-5) Enter the LEVEL OF YOUR PLACED FUEL ROCKET TANKS (from the builders talent "Piloting -> Rocket Scientist -> Rocket Booster Fuel Tank Handling")
 statContainerOptimization = 0 --export Stock Control -> Container Optimization
 statFuelTankOptimization = 0 --export Mining and Inventory -> Stock Control -> Fuel Tank Optimization
+brakeLandingRate = 30 -- export: (Default: 30) Max loss of altitude speed in m/s when doing a brake landing, default 30.  This is to prevent "bouncing" as hover/boosters catch you.  Do not use negative number.
+
 
 -- VARIABLES TO BE SAVED GO HERE, SAVEABLE are Edit LUA Parameter settable, AUTO are ship status saves that occur over get up and sit down.
 local saveableVariables = { "yawSpeedFactor", "torqueFactor", "brakeSpeedFactor",
@@ -37,7 +39,7 @@ local vSpd = 0
 local targetVelocity = 0
 local vTargetSpeed = 0
 local up_down_switch = 0
-local teledown = 0
+teledown = 0
 altDiff = 0
 currentAltitude = 0
 speed_increment = 0
@@ -46,7 +48,7 @@ throttle_input = 0
 throttle_in = 0
 initialAlt = core.getAltitude()
 targetAltitude = core.getAltitude()
-currentAltitude = core.getAltitude()
+
 worldVertical = vec3(core.getWorldVertical()) -- along gravity
 constructUp = vec3(core.getConstructWorldOrientationUp())
 constructForward = vec3(core.getConstructWorldOrientationForward())
@@ -66,13 +68,21 @@ weightRocketFuel = 0.8
 
 -- Testing Purpose
 debug = false
+-- Testing features
 apActive = false
+brakeLanding = false
 
 -- function localizations for improved performance when used frequently or in loops.
 local atmosphere = unit.getAtmosphereDensity
 local constructMass = core.getConstructMass
 
 -- AP Stuff
+planet = {}
+systemId = 0
+bodyId = 0
+latitude = 0
+longitude = 0
+altitude = 0
 targetPos = vec3()
 currentPos = vec3()
 lockBrake = false 
@@ -764,7 +774,7 @@ function convertToWorldCoordinates(pos) -- Many thanks to SilverZero for this.
     end
     longitude = math.rad(longitude)
     latitude = math.rad(latitude)
-    local planet = atlas[tonumber(systemId)][tonumber(bodyId)]  
+    planet = atlas[tonumber(systemId)][tonumber(bodyId)]  
     local xproj = math.cos(latitude);   
     local planetxyz = vec3(xproj*math.cos(longitude),
                           xproj*math.sin(longitude),
@@ -936,8 +946,8 @@ if debug then
     local pos = string.sub(input, i)
     local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
     local posPattern = "::pos{" .. num .. "," .. num .. "," .. num .. "," .. num .. "," .. num .. "}"
-    local systemId, bodyId, latitude, longitude, altitude = string.match(pos, posPattern)
-    local planet = atlas[tonumber(systemId)][tonumber(bodyId)].name
+    systemId, bodyId, latitude, longitude, altitude = string.match(pos, posPattern)
+    planet = atlas[tonumber(systemId)][tonumber(bodyId)]
     targetPos = vec3(convertToWorldCoordinates(pos))
     currentPos = vec3(core.getConstructWorldPos())
     APTarget = targetPos
@@ -945,7 +955,7 @@ if debug then
 end
 
 function script.onStart()
-    VERSION_NUMBER = 0.002
+    VERSION_NUMBER = 0.500
     unit.setTimer("tenthSecond", 1/10)
     unit.setTimer("oneSecond", 1)
 end
@@ -963,7 +973,6 @@ function script.onFlush()
     brakeFlatFactor = math.max(brakeFlatFactor, 0.01)
     stabilization = 0
 
-    currentAltitude = core.getAltitude()
     if currentAltitude == nil then
         currentAltitude = 0
     end
@@ -1186,6 +1195,11 @@ function script.onFlush()
 end
 function script.onTick(timerId)
     if timerId == "tenthSecond" then
+        if  planet.radius == nil then 
+            currentAltitude = core.getAltitude()
+        else
+            currentAltitude = (vec3(core.getConstructWorldPos()) - vec3(planet.center)):len() - planet.radius
+        end
 
         if lockBrake then
             brakeInput2 = 1
@@ -1202,22 +1216,40 @@ function script.onTick(timerId)
         LastMaxBrake + vec3(core.getWorldAirFrictionAcceleration()):len() *
             constructMass())      
 
-        if not apActive then 
+        if brakeLanding then    
+            apActive = false    
+            local landingSpd = brakeLandingRate
+            if teledown < 0 then 
+                targetAltitude = currentAltitude - landingSpd
+                elseif teledown > 0 then 
+                    local target
+                    targetAltitude = currentAltitude - utils.clamp(landingSpd,0,teledown)
+                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+                    Nav.axisCommandManager:setTargetGroundAltitude(teledown)
+                    Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(teledown)
+                elseif teledown < 10 then 
+                    local target
+                    lockBrake = true
+                    targetAltitude = currentAltitude - teledown
+                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+                    Nav.axisCommandManager:setTargetGroundAltitude(0)
+                    Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(0)                    
+                elseif teledown < 5 then  
+                    lockBrake = false                  
+                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+                else
+                    lockBrake = false
+                end
+        end
+
+
+        if not apActive and not brakeLanding then 
             yawInput2 = 0
             pitchInput2 = 0
             lockBrake = false    
             speedincrement = 0
             APthrust = 0
         end
-
-
-        --system.print("brakeInput: " .. brakeInput) 
-        --system.print("brakeInput2: " .. brakeInput2) 
-        --system.print("lockBrake:" ..(lockBrake and 'true' or 'false') )
-        
-        if debug then
-        end
-        
 
         if APTarget ~= nil then
             distance3d = (vec3(core.getConstructWorldPos()) - APTarget):len()            
@@ -1234,21 +1266,18 @@ function script.onTick(timerId)
             local horizonForward = APTarget:project_on_plane(cwg)
             distance = horizonForward:len()
            -- distance = (vec3(core.getConstructWorldPos()) - APTarget):project_on(vec3(core.getConstructWorldOrientationUp())):len()
+            vecDiff = vec3(core.getConstructWorldPos()) - vec3(APTarget)
+            altDiff = -vecDiff:project_on(constructUp):len() * utils.sign(vecDiff:dot(constructUp))
 
-            local targetVector = (vec3(core.getConstructWorldPos()) - APTarget)
-            altDiff = (APTarget - vec3(core.getConstructWorldPos())):project_on(vec3(core.getConstructWorldOrientationUp())):len()
+            system.print("altDiff2"..altDiff)
             
-
-           -- local distance = targetVector:len() - verticalAmount
-
+            -- local distance = targetVector:len() - verticalAmount
             --horizonUp = APTarget:project_on_plane(constructUp)
             --system.print("angle:" .. APTargetAngle * constants.rad2deg) --* constants.rad2deg)
         end
 
         if APTarget ~= nil and apActive  then
 
-            system.print("altDiff"..altDiff)
-            system.print("targetAltitude" .. targetAltitude)
             targetAltitude = currentAltitude + altDiff
 
             if currentAltitude == nil then
@@ -1267,7 +1296,7 @@ function script.onTick(timerId)
                   lockBrake = false    
             end
 
-             if not APisaligned then
+             if (not APisaligned and altDiff < 10) or  (distance < 10 and altDiff < 10) then
                 lockBrake = true                 
              else
                 lockBrake = false
@@ -1278,7 +1307,6 @@ function script.onTick(timerId)
                end
 
                if targetAltitude < 1100 and distance < 1100 then
-                --targetAltitude = utils.clamp(targetAltitude, lowAlt,highAlt)
               end
 
                hTargetSpeed = utils.clamp(distance, -1000,1000)
@@ -1292,10 +1320,9 @@ function script.onTick(timerId)
                end
                system.print("Distance...".. distance)
                if distance < 5 and hSpd < 1 then
-    
                 lockBrake = true  
                 targetAltitude = currentAltitude + altDiff
-                 
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
                 APspeedincrement = 0
                 APthrust = 0
                 yawInput2 = 0
@@ -1321,6 +1348,7 @@ function script.onUpdate()
     hSpd_hud = round(hSpd * 3.6, 0)
 
     local currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
+
     local currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
     local thrustbarneg = false
 
@@ -1347,7 +1375,7 @@ function script.onUpdate()
         2
     ) * 100
 
-    local teledown = round(tele_down.getDistance(), 0)
+    teledown = round(tele_down.getDistance(), 2)
 
     if startPositionAngle == nil then
         startPositionAngle = 0
@@ -1528,107 +1556,142 @@ function script.onUpdate()
      </style>]]
 
      local html = [[        
-<div class="row">
-<div class="column">
-   <h2>Basic</h2>
-   <div class="controls-hud">
-      <div class="control-container">
-         <p>Vertical Speed</p>
-         ]] ..
-         vSpeed_hud ..
-         [[ km/h
-      </div>
-      <div class="control-container">
-         <p>Horizontal Speed</p>
-         ]] ..
-         hSpd_hud ..
-         [[ km/h
-      </div>
-      <div class="control-container">
-         <p>Braking</p>
-         ]] ..
-         brakeInput_hud ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Auto Level</p>
-         ]] ..
-         autolevel ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Auto Altitude</p>
-         ]] ..
-         isautoalt ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Current Alt</p>
-         ]] ..
-         currentAltitude_hud ..
-         " m" ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Target Alt</p>
-         ]] ..
-         targetAltitude_hud ..
-         " m" ..
-         [[
-      </div>
-      <div class="control-container">
-         <p>Base Alt</p>
-         ]] ..
-         initialAlt_hud ..
-         " m" ..
-         [[
-      </div>
-   </div>
-   
-   <h2>Thrust</h2>
-   <div class="controls-hud">
-      <p>Horizontal Thrust</p>
-      <div id="horizontal">
-         <div>]] ..
-            currentthrust ..
-            " %" ..
+    <div class="row">
+    <div class="column">      
+    <h2>Basic</h2>
+    <div class="controls-hud">
+        <div class="control-container">
+            <p>Vertical Speed</p>
+            ]] ..
+            vSpeed_hud ..
+            [[ km/h
+        </div>
+        <div class="control-container">
+            <p>Horizontal Speed</p>
+            ]] ..
+            hSpd_hud ..
+            [[ km/h
+        </div>
+        <div class="control-container">
+            <p>Braking</p>
+            ]] ..
+            brakeInput_hud ..
             [[
-         </div>
-      </div>
-      <p>Vertical Thrust</p>
-      <div id="vertical">
-         <div>]] ..
-            currentvert ..
-            " %" ..
+        </div>
+        <div class="control-container">
+            <p>Auto Level</p>
+            ]] ..
+            autolevel ..
             [[
-         </div>
-      </div>
-      <p>Height Reached</p>
-      <div id="alt_diff">
-         <div>]] ..
-            deltaheight ..
-            " %" ..
+        </div>
+        <div class="control-container">
+            <p>Auto Altitude</p>
+            ]] ..
+            isautoalt ..
             [[
-         </div>
-      </div>
-   </div>
-</div>
-<div class="column">
-   <div class="controls-hud-right">
-   <h2>Fuel</h2>
-      ]] .. htmlTankInfo ..[[
-   </div>
-</div>
-</div>
-</div>]]
+        </div>
+        <div class="control-container">
+            <p>Current Alt</p>
+            ]] ..
+            currentAltitude_hud ..
+            " m" ..
+            [[
+        </div>
+        <div class="control-container">
+            <p>Target Alt</p>
+            ]] ..
+            targetAltitude_hud ..
+            " m" ..
+            [[
+        </div>
+        <div class="control-container">
+            <p>Base Alt</p>
+            ]] ..
+            initialAlt_hud ..
+            " m" ..
+            [[
+        </div>
+    </div>
+    <h2>Autopilot</h2>
+    <div class="controls-hud">
+        <div class="control-container">
+            <p>active</p>
+            ]] ..
+            apActive_hud ..
+            [[
+        </div>
+        <div class="control-container">
+            <p>aligned</p>
+            ]] ..
+            isaligned ..
+            [[
+        </div>
+        <div class="control-container">
+            <p>Distance to Ground</p>
+            ]] ..
+            teledown ..
+            [[ m
+        </div>
+        <div class="control-container">
+            <p>Distance to Target</p>
+            ]] ..
+            distance_hud ..
+            [[ m
+        </div>
+        <div class="control-container">
+            <p>Lockbrake</p>
+            ]] ..
+            braketoggle_hud ..
+            [[
+        </div>
+    </div>
+    <h2>Thrust</h2>
+    <div class="controls-hud">
+        <p>Horizontal Thrust</p>
+        <div id="horizontal">
+            <div>]] ..
+                currentthrust ..
+                " %" ..
+                [[
+            </div>
+        </div>
+        <p>Vertical Thrust</p>
+        <div id="vertical">
+            <div>]] ..
+                currentvert ..
+                " %" ..
+                [[
+            </div>
+        </div>
+        <p>Height Reached</p>
+        <div id="alt_diff">
+            <div>]] ..
+                deltaheight ..
+                " %" ..
+                [[
+            </div>
+        </div>
+    </div>
+    </div>
+    <div class="column">
+    <div class="controls-hud-right">
+        <h2>Fuel</h2>
+            ]] .. htmlTankInfo ..[[
+        </div>
+    </div>
+    </div>
+    </div>]]
 
-    html = css .. html
-    system.setScreen(html)
-    system.showScreen(1)
+        html = css .. html
+        system.setScreen(html)
+        system.showScreen(1)
 end
 
 function script.onActionStart(action)
-    if action == "brake" then
+    if action == "gear" then
+        apActive = false
+        brakeLanding = not brakeLanding
+    elseif action == "brake" then
         brakeInput = brakeInput + 1
         local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
         if (longitudinalCommandType == axisCommandType.byvTargetSpeed) then
@@ -1643,8 +1706,6 @@ function script.onActionStart(action)
         else
         pitchInput = pitchInput - 1
         end 
-
-
     elseif action == "speedup" then
         Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
         throttle_increment = 0
@@ -1697,16 +1758,19 @@ function script.onActionStart(action)
     elseif action == "option2" then
         autoalt = not autoalt
     elseif action == "option4" then
-        --apActive = not apActive
-        --if lockBrake then 
-        --    lockBrake  = false 
-        --    brakeInput = 0
-        --end
+        apActive = not apActive
+        if lockBrake then 
+            lockBrake  = false 
+            brakeInput2 = 0
+            brakeInput = 0
+        end
        end
 end
 
 function script.onActionStop(action)
-    if action == "brake" then
+    if action == "gear" then
+        --brakeLanding = false
+    elseif action == "brake" then
         brakeInput = brakeInput - 1
     elseif action == "forward" then
         if level then
@@ -1828,6 +1892,27 @@ function script.onInputText(text)
         targetAltitude = arguement
         msgText = "Target Altitude set to: '" .. arguement .. "'"
         system.print(msgText)
+    end
+
+    if command == "/goto" then
+        if arguement == nil or arguement == "" or string.find(arguement, "::") == nil then
+            msgText = "Usage: /goto ::pos{0,2,46.4596,-155.1799,22.6572}"
+            return
+        end
+        i = string.find(arguement, "::")
+        local pos = string.sub(arguement, i)
+        local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
+        local posPattern = "::pos{" .. num .. "," .. num .. "," .. num .. "," .. num .. "," .. num .. "}"
+        systemId, bodyId, latitude, longitude, altitude = string.match(pos, posPattern)
+        planet = atlas[tonumber(systemId)][tonumber(bodyId)].name
+        system.print("planet:" .. planet .. " lat: " .. latitude .. " lon: " .. longitude .. " alt: " .. altitude)
+        targetPos = vec3(convertToWorldCoordinates(pos))
+        currentPos = vec3(core.getConstructWorldPos())
+
+        system.print(currentPos:__tostring())
+        system.print(targetPos:__tostring())
+    
+        APTarget = targetPos
     end
 end
 script.onStart()
