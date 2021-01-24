@@ -1,4 +1,5 @@
 ## ChangeLog - Most recent changes at the top
 
-Version 0.001 
-- Initial Release
+Version 0.005 
+- Initial AP Release
+- Added Fuel Tank Display
