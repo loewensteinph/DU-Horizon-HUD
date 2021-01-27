@@ -16,7 +16,7 @@ forcefield = ForceFieldUnit -- select=manual
 atmofueltank = AtmoFuelContainer
 spacefueltank = SpaceFuelContainer -- select=manual
 rocketfueltank = RocketFuelContainer -- select=manual
-
+vertengine_1 = AtmosphericEngine-- select=manual
 -- Auto-generated items from slots above (there are likely more we don't use)
 weapon_size = nil
 radar_1 = nil
@@ -26,3 +26,4 @@ spacefueltank_size = nil
 rocketfueltank_size = nil
 screen_1 = nil
 screen_2 = nil
+vertengine_1 = nil
