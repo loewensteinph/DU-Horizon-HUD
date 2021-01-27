@@ -1,7 +1,7 @@
 -- Script is laid out variables, functions, control, control (the Hud proper) starts around line 4000
 Nav = Navigator.new(system, core, unit)
 
-script = {}  -- wrappable container for all the code. Different than normal DU Lua in that things are not seperated out.
+script = {} -- wrappable container for all the code. Different than normal DU Lua in that things are not seperated out.
 
 -- Edit LUA Variable user settings.  Must be global to work with databank system as set up due to using _G assignment
 yawSpeedFactor = 1 -- export: (Default: 1) For keyboard control
@@ -17,12 +17,23 @@ statRocketFuelTankHandling = 0 --export (0-5) Enter the LEVEL OF YOUR PLACED FUE
 statContainerOptimization = 0 --export Stock Control -> Container Optimization
 statFuelTankOptimization = 0 --export Mining and Inventory -> Stock Control -> Fuel Tank Optimization
 brakeLandingRate = 30 -- export: (Default: 30) Max loss of altitude speed in m/s when doing a brake landing, default 30.  This is to prevent "bouncing" as hover/boosters catch you.  Do not use negative number.
-
-
+landingGearGroundHeight = 1 --export: (Default: 0) Set to AGL-1 when on ground (or 0)
+targetHoverHeight = 50 -- export: (Default: 50) Hover height when retracting landing gear
 -- VARIABLES TO BE SAVED GO HERE, SAVEABLE are Edit LUA Parameter settable, AUTO are ship status saves that occur over get up and sit down.
-local saveableVariables = { "yawSpeedFactor", "torqueFactor", "brakeSpeedFactor",
-                        "brakeFlatFactor", "pitchSpeedFactor","rollSpeedFactor","dampingMultiplier","statAtmosphericFuelTankHandling",
-                    "statSpaceFuelTankHandling","statRocketFuelTankHandling","statContainerOptimization","statFuelTankOptimization"}
+local saveableVariables = {
+    "yawSpeedFactor",
+    "torqueFactor",
+    "brakeSpeedFactor",
+    "brakeFlatFactor",
+    "pitchSpeedFactor",
+    "rollSpeedFactor",
+    "dampingMultiplier",
+    "statAtmosphericFuelTankHandling",
+    "statSpaceFuelTankHandling",
+    "statRocketFuelTankHandling",
+    "statContainerOptimization",
+    "statFuelTankOptimization"
+}
 -- Edit LUA Variable user settings.  Must be global to work with databank system as set up due to using _G assignment
 -- Auto Variable declarations that store status of ship. Must be global because they get saved/read to Databank due to using _G assignment
 local pitchInput = 0
@@ -37,12 +48,34 @@ local Kinematic = nil
 local hSpd = 0
 local vSpd = 0
 local targetVelocity = 0
-local vTargetSpeed = 0
+-- rename auto vert thrust
+thrustCurrent = 0
+thrustTarget = 0
+thrustInput = 0
+
+velocity = vec3(core.getWorldVelocity())
+vTargetSpeed = 0
 local up_down_switch = 0
+currentRollDeg = 0
+currentYawDeg = 0
+vertThrustInput=0
+relativeYaw = 0
+relativePitch = 0
+maxVerticalThrust = 0
+maxHoverThrust = 0
+maxVerticalEngineThrust = 0
+-- thrust
+maxHoverThrust = core.getMaxKinematicsParametersAlongAxis("hover_engine", core.getConstructOrientationUp())
+maxVerticalThrustVBbooster = core.getMaxKinematicsParametersAlongAxis("vertical", core.getConstructOrientationUp())
+maxVerticalEngineThrust = maxVerticalThrustVBbooster[1] - maxHoverThrust[1]
+
+-- 1 Atmo up 2 Atmo down
+-- 3 Space up 4 Space down
 teledown = 0
 altDiff = 0
 currentAltitude = 0
 speed_increment = 0
+increment = 0
 throttle_increment = 0
 throttle_input = 0
 throttle_in = 0
@@ -77,6 +110,8 @@ local atmosphere = unit.getAtmosphereDensity
 local constructMass = core.getConstructMass
 
 -- AP Stuff
+APTargetAngle = 0
+distance = 0
 planet = {}
 systemId = 0
 bodyId = 0
@@ -85,7 +120,7 @@ longitude = 0
 altitude = 0
 targetPos = vec3()
 currentPos = vec3()
-lockBrake = false 
+lockBrake = false
 brakeDistance = 0
 vMaxSpeed = 0
 hMaxSpeed = 0
@@ -93,8 +128,8 @@ previousYawAmount = 0
 previousPitchAmount = 0
 pitchAmount = 0
 local autopilotStrength = 0.2 -- How strongly autopilot tries to point at a target
-local alignmentTolerance = 0.05 -- How closely it must align to a planet before accelerating to it
-local minimumRateOfChange = math.cos(30*constants.deg2rad) -- Adjust 30 which is taken from stall angle
+local alignmentTolerance = 1.1 -- How closely it must align to a planet before accelerating to it
+local minimumRateOfChange = math.cos(30 * constants.deg2rad) -- Adjust 30 which is taken from stall angle
 APTarget = nil
 APisaligned = false
 APthrust = 0
@@ -112,6 +147,39 @@ if 1 == 1 then
     system.lockView(1)
 end
 
+function getRelativePitch(velocity)
+    velocity = vec3(velocity)
+    local pitch = -math.deg(math.atan(velocity.y, velocity.z)) + 180
+    -- This is 0-360 where 0 is straight up
+    pitch = pitch - 90
+    -- So now 0 is straight, but we can now get angles up to 420
+    if pitch < 0 then
+        pitch = 360 + pitch
+    end
+    -- Now, if it's greater than 180, say 190, make it go to like -170
+    if pitch > 180 then
+        pitch = -180 + (pitch - 180)
+    end
+    -- And it's backwards.  
+    return -pitch
+end
+function getRelativeYaw(velocity)
+    velocity = vec3(velocity)
+    local yaw = math.deg(math.atan(velocity.y, velocity.x)) - 90
+    if yaw < -180 then
+        yaw = 360 + yaw
+    end
+    return yaw
+end
+function getPitch(gravityDirection, forward, right)
+    local horizontalForward = gravityDirection:cross(right):normalize_inplace() -- Cross forward?
+    local pitch = math.acos(utils.clamp(horizontalForward:dot(-forward), -1, 1)) * constants.rad2deg -- acos?
+
+    if horizontalForward:cross(-forward):dot(right) < 0 then
+        pitch = -pitch
+    end -- Cross right dot forward?
+    return pitch
+end
 -- contaienr info
 function setContainerInfo()
     typeElements = {}
@@ -285,23 +353,26 @@ function setContainerInfo()
             fuelRocketTotal = fuelRocketTotal + baseVol
         end
     end
-end           
-
+end
 function setContainerDisplayInfo()
     fuelTanksDisplay = {}
 
-    for _,v in ipairs(fuelAtmosphericTanks) do
+    for _, v in ipairs(fuelAtmosphericTanks) do
         table.insert(fuelTanksDisplay, v)
     end
-    for _,v in ipairs(fuelSpaceTanks) do
+    for _, v in ipairs(fuelSpaceTanks) do
         table.insert(fuelTanksDisplay, v)
     end
-    for _,v in ipairs(fuelRocketTanks) do
+    for _, v in ipairs(fuelRocketTanks) do
         table.insert(fuelTanksDisplay, v)
     end
-    table.sort(fuelTanksDisplay, function(a,b) return a.type<b.type or (a.type == b.type and a.id<b.id) end)
-end    
-
+    table.sort(
+        fuelTanksDisplay,
+        function(a, b)
+            return a.type < b.type or (a.type == b.type and a.id < b.id)
+        end
+    )
+end
 function lockBrakeToggle()
     -- Toggle brakes
     lockBrake = not lockBrake
@@ -320,7 +391,7 @@ function Atlas()
                     y = 0,
                     z = 0
                 },
-                name = 'Space',
+                name = "Space",
                 planetarySystemId = 0,
                 radius = 0,
                 atmos = false,
@@ -334,7 +405,7 @@ function Atlas()
                     y = 22665536.000,
                     z = -34464.000
                 },
-                name = 'Madis',
+                name = "Madis",
                 planetarySystemId = 0,
                 radius = 44300,
                 atmos = true,
@@ -348,7 +419,7 @@ function Atlas()
                     y = -8.000,
                     z = -126303.000
                 },
-                name = 'Alioth',
+                name = "Alioth",
                 planetarySystemId = 0,
                 radius = 126068,
                 atmos = true,
@@ -362,7 +433,7 @@ function Atlas()
                     y = 10865536.000,
                     z = 65536.000
                 },
-                name = 'Thades',
+                name = "Thades",
                 planetarySystemId = 0,
                 radius = 49000,
                 atmos = true,
@@ -376,11 +447,11 @@ function Atlas()
                     y = 55765536.000,
                     z = 465536.000
                 },
-                name = 'Talemai',
+                name = "Talemai",
                 planetarySystemId = 0,
                 radius = 57450,
                 atmos = true,
-                gravity = 0.46                    
+                gravity = 0.46
             },
             [5] = {
                 GM = 16951680000,
@@ -390,11 +461,11 @@ function Atlas()
                     y = 22565536.000,
                     z = -48934464.000
                 },
-                name = 'Feli',
+                name = "Feli",
                 planetarySystemId = 0,
                 radius = 60000,
                 atmos = true,
-                gravity = 0.48                    
+                gravity = 0.48
             },
             [6] = {
                 GM = 10502547741,
@@ -404,11 +475,11 @@ function Atlas()
                     y = 27165538.000,
                     z = 52065535.000
                 },
-                name = 'Sicari',
+                name = "Sicari",
                 planetarySystemId = 0,
                 radius = 51100,
                 atmos = true,
-                gravity = 0.41                    
+                gravity = 0.41
             },
             [7] = {
                 GM = 13033380591,
@@ -418,11 +489,11 @@ function Atlas()
                     y = 29665535.000,
                     z = 58165535.000
                 },
-                name = 'Sinnen',
+                name = "Sinnen",
                 planetarySystemId = 0,
                 radius = 54950,
                 atmos = true,
-                gravity = 0.44                    
+                gravity = 0.44
             },
             [8] = {
                 GM = 18477723600,
@@ -432,7 +503,7 @@ function Atlas()
                     y = 54665536.000,
                     z = -934463.940
                 },
-                name = 'Teoma',
+                name = "Teoma",
                 planetarySystemId = 0,
                 radius = 62000,
                 atmos = true,
@@ -446,7 +517,7 @@ function Atlas()
                     y = 12765534.000,
                     z = -3634464.000
                 },
-                name = 'Jago',
+                name = "Jago",
                 planetarySystemId = 0,
                 radius = 61590,
                 atmos = true,
@@ -460,7 +531,7 @@ function Atlas()
                     y = 22966846.286,
                     z = 143078.820
                 },
-                name = 'Madis Moon 1',
+                name = "Madis Moon 1",
                 planetarySystemId = 0,
                 radius = 10000,
                 atmos = false,
@@ -474,7 +545,7 @@ function Atlas()
                     y = 22243633.880,
                     z = -214962.810
                 },
-                name = 'Madis Moon 2',
+                name = "Madis Moon 2",
                 planetarySystemId = 0,
                 radius = 11000,
                 atmos = false,
@@ -488,7 +559,7 @@ function Atlas()
                     y = 22184730.000,
                     z = -309989.990
                 },
-                name = 'Madis Moon 3',
+                name = "Madis Moon 3",
                 planetarySystemId = 0,
                 radius = 15005,
                 atmos = false,
@@ -502,7 +573,7 @@ function Atlas()
                     y = -1509011.000,
                     z = 115524.000
                 },
-                name = 'Alioth Moon 1',
+                name = "Alioth Moon 1",
                 planetarySystemId = 0,
                 radius = 30000,
                 atmos = false,
@@ -516,7 +587,7 @@ function Atlas()
                     y = 729681.000,
                     z = -411464.000
                 },
-                name = 'Alioth Moon 4',
+                name = "Alioth Moon 4",
                 planetarySystemId = 0,
                 radius = 30330,
                 atmos = false,
@@ -530,7 +601,7 @@ function Atlas()
                     y = 562655.000,
                     z = -285074.000
                 },
-                name = 'Sanctuary',
+                name = "Sanctuary",
                 planetarySystemId = 0,
                 radius = 83400,
                 atmos = true,
@@ -544,7 +615,7 @@ function Atlas()
                     y = 10907080.695,
                     z = 433858.200
                 },
-                name = 'Thades Moon 1',
+                name = "Thades Moon 1",
                 planetarySystemId = 0,
                 radius = 14002,
                 atmos = false,
@@ -558,7 +629,7 @@ function Atlas()
                     y = 10432768.000,
                     z = 19554.131
                 },
-                name = 'Thades Moon 2',
+                name = "Thades Moon 2",
                 planetarySystemId = 0,
                 radius = 15000,
                 atmos = false,
@@ -572,7 +643,7 @@ function Atlas()
                     y = 55594325.000,
                     z = 769838.640
                 },
-                name = 'Talemai Moon 2',
+                name = "Talemai Moon 2",
                 planetarySystemId = 0,
                 radius = 12000,
                 atmos = false,
@@ -586,7 +657,7 @@ function Atlas()
                     y = 55700259.000,
                     z = 325207.840
                 },
-                name = 'Talemai Moon 3',
+                name = "Talemai Moon 3",
                 planetarySystemId = 0,
                 radius = 11000,
                 atmos = false,
@@ -600,7 +671,7 @@ function Atlas()
                     y = 55781856.000,
                     z = 740177.760
                 },
-                name = 'Talemai Moon 1',
+                name = "Talemai Moon 1",
                 planetarySystemId = 0,
                 radius = 15000,
                 atmos = false,
@@ -614,7 +685,7 @@ function Atlas()
                     y = 22261034.700,
                     z = -48862386.000
                 },
-                name = 'Feli Moon 1',
+                name = "Feli Moon 1",
                 planetarySystemId = 0,
                 radius = 14000,
                 atmos = false,
@@ -628,7 +699,7 @@ function Atlas()
                     y = 29797945.000,
                     z = 57969449.000
                 },
-                name = 'Sinnen Moon 1',
+                name = "Sinnen Moon 1",
                 planetarySystemId = 0,
                 radius = 17000,
                 atmos = false,
@@ -642,7 +713,7 @@ function Atlas()
                     y = -13534464.000,
                     z = -934461.990
                 },
-                name = 'Lacobus',
+                name = "Lacobus",
                 planetarySystemId = 0,
                 radius = 55650,
                 atmos = true,
@@ -656,7 +727,7 @@ function Atlas()
                     y = -13950921.100,
                     z = -647589.530
                 },
-                name = 'Lacobus Moon 3',
+                name = "Lacobus Moon 3",
                 planetarySystemId = 0,
                 radius = 15000,
                 atmos = false,
@@ -670,7 +741,7 @@ function Atlas()
                     y = -13783862.000,
                     z = -926156.400
                 },
-                name = 'Lacobus Moon 1',
+                name = "Lacobus Moon 1",
                 planetarySystemId = 0,
                 radius = 18000,
                 atmos = false,
@@ -684,7 +755,7 @@ function Atlas()
                     y = -13629215.000,
                     z = -1059341.400
                 },
-                name = 'Lacobus Moon 2',
+                name = "Lacobus Moon 2",
                 planetarySystemId = 0,
                 radius = 14000,
                 atmos = false,
@@ -698,7 +769,7 @@ function Atlas()
                     y = -85634465.000,
                     z = -934464.300
                 },
-                name = 'Symeon',
+                name = "Symeon",
                 planetarySystemId = 0,
                 radius = 49050,
                 atmos = true,
@@ -712,7 +783,7 @@ function Atlas()
                     y = -99034464.000,
                     z = -934462.020
                 },
-                name = 'Ion',
+                name = "Ion",
                 planetarySystemId = 0,
                 radius = 44950,
                 atmos = true,
@@ -726,7 +797,7 @@ function Atlas()
                     y = -99133747.000,
                     z = -1133582.800
                 },
-                name = 'Ion Moon 1',
+                name = "Ion Moon 1",
                 planetarySystemId = 0,
                 radius = 11000,
                 atmos = false,
@@ -740,87 +811,107 @@ function Atlas()
                     y = -99275010.000,
                     z = -1378480.700
                 },
-                name = 'Ion Moon 2',
+                name = "Ion Moon 2",
                 planetarySystemId = 0,
                 radius = 15000,
                 atmos = false,
                 gravity = 0.12
-            },
+            }
         }
     }
 end
-
 atlas = Atlas()
-
 setContainerInfo()
 setContainerDisplayInfo()
-
 -- Function Definitions
 function getMagnitudeInDirection(vector, direction)
     vector = vec3(vector)
     direction = vec3(direction):normalize()
-    local result = vector * direction -- To preserve sign, just add them I guess   
+    local result = vector * direction -- To preserve sign, just add them I guess
     return result.x + result.y + result.z
-end     
-
+end
 function convertToWorldCoordinates(pos) -- Many thanks to SilverZero for this.
-    local num  = ' *([+-]?%d+%.?%d*e?[+-]?%d*)'
-    local posPattern = '::pos{' .. num .. ',' .. num .. ',' ..  num .. ',' .. num ..  ',' .. num .. '}'    
+    local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
+    local posPattern = "::pos{" .. num .. "," .. num .. "," .. num .. "," .. num .. "," .. num .. "}"
     local systemId, bodyId, latitude, longitude, altitude = string.match(pos, posPattern)
     if (systemId == "0" and bodyId == "0") then
-        return vec3(tonumber(latitude),
-                    tonumber(longitude),
-                    tonumber(altitude))
+        return vec3(tonumber(latitude), tonumber(longitude), tonumber(altitude))
     end
     longitude = math.rad(longitude)
     latitude = math.rad(latitude)
-    planet = atlas[tonumber(systemId)][tonumber(bodyId)]  
-    local xproj = math.cos(latitude);   
-    local planetxyz = vec3(xproj*math.cos(longitude),
-                          xproj*math.sin(longitude),
-                             math.sin(latitude));
+    planet = atlas[tonumber(systemId)][tonumber(bodyId)]
+    local xproj = math.cos(latitude)
+    local planetxyz = vec3(xproj * math.cos(longitude), xproj * math.sin(longitude), math.sin(latitude))
     return planet.center + (planet.radius + altitude) * planetxyz
 end
-
 function alignToWorldVector(vector, tolerance)
     -- Sets inputs to attempt to point at the autopilot target
     -- Meant to be called from Update or Tick repeatedly
     --if rateOfChange > (minimumRateOfChange+0.08) then
-        if tolerance == nil then
-            tolerance = alignmentTolerance
-        end
-        
-        local APTargetReleativePos = (APTarget - vec3(core.getConstructWorldPos()))
-        local APTargetYaw = APTargetReleativePos:project_on_plane(constructUp)
-        local APTargetAngle = APTargetYaw:angle_between(constructForward)
-        local rightAngle = APTargetYaw:angle_between(constructRight)
-        if (rightAngle * constants.rad2deg) < 90 then
-            APTargetAngle = -APTargetAngle
+    if tolerance == nil then
+        tolerance = alignmentTolerance
+    end
+
+    local APTargetReleativePos = (APTarget - vec3(core.getConstructWorldPos()))
+    local APTargetYaw = APTargetReleativePos:project_on_plane(constructUp)
+    APTargetAngle = APTargetYaw:angle_between(constructForward)
+    local rightAngle = APTargetYaw:angle_between(constructRight)
+
+    if (rightAngle * constants.rad2deg) < 90 then
+        APTargetAngle = -APTargetAngle
+    end
+
+    if math.abs(APTargetAngle * constants.rad2deg) > 10 then -- and vSpd > 20
+        if hSpd * 3.6 < 350 then
+            APspeedincrement = APspeedincrement + 0.01
+            APthrust = APthrust + APspeedincrement
+        else
+            APspeedincrement = 0
+            APthrust = 0
+            system.print("TOOOO Fast")
         end
 
-            local APYawPID = pid.new(1, 0, 5)
-            APYawPID:inject(APTargetAngle)
-            yawInput2 = APYawPID:get()
-         --yawInput2 = - yawAmount
-        
-         if not APisaligned then
+        local APRollPID = pid.new(0.007, 0, 0.08)--pid.new(0.04, 0, 0.5)
+        APRollPID:inject(APTargetAngle)
+        rollInput2 = -APRollPID:get()
+    else
+        APthrust = 0
+        rollInput2 = 0
+    end
 
-         end
-        --system.print("yawInput2"..yawInput2)
-        --system.print("previousYawAmount"..previousYawAmount)
-        -- Return true or false depending on whether or not we're aligned
-        if math.abs(APTargetAngle) * constants.rad2deg < math.min(tolerance,alignmentTolerance) then--math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
-            APisaligned = true
-            yawInput2 = 0
-            return true           
-        else 
-            --system.print("AP is aligning...")
-            --system.print("APTargetAngle..." .. APTargetAngle * constants.rad2deg)
-            APisaligned = false
+    local APYawPID = nil
+
+    if math.abs(currentRollDeg) > 10 then
+        APYawPID = pid.new(0.007, 0, 0.08)
+        APYawPID:inject(APTargetAngle)
+        yawInput2 = APYawPID:get()
+    else 
+       -- APYawPID = pid.new(0.02, 0, 1)
+       APYawPID = pid.new(0.02, 0.01, 1)
+        APYawPID:inject(APTargetAngle)
+        yawInput2 = APYawPID:get()
+    end
+
+    --yawInput2 = - yawAmount
+
+    if not APisaligned then
+    end
+    --system.print("yawInput2"..yawInput2)
+    --system.print("previousYawAmount"..previousYawAmount)
+    -- Return true or false depending on whether or not we're aligned
+    if math.abs(APTargetAngle) * constants.rad2deg < math.min(tolerance, alignmentTolerance) then --math.abs(yawdiff)<math.min(tolerance,alignmentTolerance) then --and math.abs(pitchAmount) < tolerance then
+       APisaligned = true
+        yawInput2 = 0
+        rollInput2 = 0
+        return true
+        --return true
+    else
+        --system.print("AP is aligning...")
+        --system.print("APTargetAngle..." .. APTargetAngle * constants.rad2deg)
+        APisaligned = false
         return false
-        end
+    end
 end
-
 function ternary(cond, T, F)
     if cond then
         return T
@@ -829,7 +920,8 @@ function ternary(cond, T, F)
     end
 end
 function round(num, numDecimalPlaces)
-    if num == nil then num = 0 
+    if num == nil then
+        num = 0
         return 0
     end
     local mult = 10 ^ (numDecimalPlaces or 0)
@@ -935,13 +1027,10 @@ function Kinematics()
     end
     return Kinematic
 end
-
-
-
 if debug then
     --local input = "::pos{0,2,44.7416,98.8891,296.1514}"
     --local input = "::pos{0,2,44.7194,98.8856,311.8763}"
-    local input = "::pos{0,2,44.7129,98.8818,276.8629}"
+    local input = "::pos{0,2,44.6500,98.9447,1095.5480}"
     i = string.find(input, "::")
     local pos = string.sub(input, i)
     local num = " *([+-]?%d+%.?%d*e?[+-]?%d*)"
@@ -953,14 +1042,12 @@ if debug then
     APTarget = targetPos
     apActive = true
 end
-
 function script.onStart()
     VERSION_NUMBER = 0.500
-    unit.setTimer("tenthSecond", 1/10)
+    unit.setTimer("tenthSecond", 1 / 10)
     unit.setTimer("oneSecond", 1)
 end
 function script.onFlush()
-
     rateOfChange = vec3(core.getConstructWorldOrientationForward()):dot(vec3(core.getWorldVelocity()):normalize())
     inAtmo = (atmosphere() > 0)
 
@@ -977,9 +1064,9 @@ function script.onFlush()
         currentAltitude = 0
     end
     -- final inputs
-    local finalPitchInput = utils.clamp(pitchInput + pitchInput2 + system.getControlDeviceForwardInput(),-1,1)
-    local finalRollInput = utils.clamp(rollInput + rollInput2 + system.getControlDeviceYawInput(),-1,1)
-    local finalYawInput = utils.clamp((yawInput + yawInput2) - system.getControlDeviceLeftRightInput(),-1,1)
+    local finalPitchInput = utils.clamp(pitchInput + pitchInput2 + system.getControlDeviceForwardInput(), -1, 1)
+    local finalRollInput = utils.clamp(rollInput + rollInput2 + system.getControlDeviceYawInput(), -1, 1)
+    local finalYawInput = utils.clamp((yawInput + yawInput2) - system.getControlDeviceLeftRightInput(), -1, 1)
     -- Axis
     worldVertical = vec3(core.getWorldVertical()) -- along gravity
     constructUp = vec3(core.getConstructWorldOrientationUp())
@@ -987,21 +1074,28 @@ function script.onFlush()
     constructRight = vec3(core.getConstructWorldOrientationRight())
     constructVelocity = vec3(core.getWorldVelocity())
     local constructVelocityDir = vec3(core.getWorldVelocity()):normalize()
-    local currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
+    currentRollDeg = getRoll(worldVertical, constructForward, constructRight)
     local currentRollDegAbs = math.abs(currentRollDeg)
     local currentRollDegSign = utils.sign(currentRollDeg)
     local atmosphere = atmosphere()
+
+    currentPitchDeg = getRoll(worldVertical, constructRight, -constructForward)
+    local currentPitchDegAbs = math.abs(currentPitchDeg)
+    local currentPitchDegSign = utils.sign(currentPitchDeg)
+    currentYawDeg = constructRight:dot(constructForward) * 180
+    local currentYawDegAbs = math.abs(currentYawDeg)
+    local currentYawDegSign = utils.sign(currentYawDeg)
 
     -- Rotation
     local constructAngularVelocity = vec3(core.getWorldAngularVelocity())
     local targetAngularVelocity =
         finalPitchInput * pitchSpeedFactor * constructRight + finalRollInput * rollSpeedFactor * constructForward +
-            finalYawInput * yawSpeedFactor * constructUp
+        finalYawInput * yawSpeedFactor * constructUp
 
     if not level then
         targetAngularVelocity =
-        finalPitchInput * pitchSpeedFactor * constructRight + finalRollInput * rollSpeedFactor * constructForward +
-        finalYawInput * yawSpeedFactor * constructUp
+            finalPitchInput * pitchSpeedFactor * constructRight + finalRollInput * rollSpeedFactor * constructForward +
+            finalYawInput * yawSpeedFactor * constructUp
     end
 
     if autoalt then
@@ -1027,38 +1121,25 @@ function script.onFlush()
                 LastMaxBrake - (core.g() * core.getConstructIMass()) * utils.sign(vSpeedSigned)
             )
         end
-
-        --system.print("brakeDistance: " .. brakeDistance)
-
-        --startup = json.decode(db.getStringValue("startlocation"))
-        --startorientation = vec3(startup.x, startup.y, startup.z)
-
-        --vecDiff = vec3(core.getConstructWorldPos()) - vec3(startorientation)
-
-         --initialAlt + vecDiff:project_on(constructUp):len() * utils.sign(vecDiff:dot(constructUp))
-         
         diff = targetAltitude - currentAltitude
-
         if atmosphere > 0.2 then
-            vMaxSpeed,hMaxSpeed = 1100
+            vMaxSpeed, hMaxSpeed = 1100
         else
             vMaxSpeed = 4000
         end
-
         vTargetSpeed = utils.clamp(diff, -vMaxSpeed, vMaxSpeed)
-
         if
-                math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and atmosphere > 0 and
+            math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and atmosphere > 0 and
                 math.abs((targetAltitude - currentAltitude)) < 25 and
                 math.abs((targetAltitude - currentAltitude)) > 5
          then
-                finalBrakeInput = 1
+            finalBrakeInput = 1
         elseif
-                math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and atmosphere > 0 and
+            math.abs(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal)) < 0.1 and atmosphere > 0 and
                 targetAltitude < currentAltitude and
                 math.abs(vSpeed) > 25 and
                 brakeDistance > math.abs((targetAltitude - currentAltitude))
-         then 
+         then
             finalBrakeInput = 1
         elseif teledown > 0 and targetAltitude < currentAltitude and math.abs(vSpeed) > 10 then
             finalBrakeInput = 1
@@ -1068,31 +1149,59 @@ function script.onFlush()
         end
 
         local power = 3
-        local up_down_switch = 0
+        local up_down_switch = 1
 
         --system.print(vTargetSpeed)
 
-        if currentAltitude < targetAltitude then
-            up_down_switch = -1
-            targetVelocity = (up_down_switch * vTargetSpeed / 3.6) * worldVertical
-            stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
-            Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
+        up_down_switch = utils.sign(vTargetSpeed)
+
+        local force = vSpeedSigned * constructMass()
+        local forceTarget = vTargetSpeed * constructMass() 
+        local gForce = core.g() * constructMass() 
+        
+        
+
+        if vTargetSpeed>0 then 
+            thrustCurrent = (force + gForce) / maxVerticalEngineThrust
+            thrustTarget = (forceTarget + gForce) / maxVerticalEngineThrust --* up_down_switch
         end
 
-        if currentAltitude > targetAltitude then
-            up_down_switch = 1
-            targetVelocity = (up_down_switch * math.abs(vTargetSpeed) / 3.6) * worldVertical
-            stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
-            Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
+        if vTargetSpeed<0 then 
+            thrustCurrent = (gForce) / maxVerticalEngineThrust
+            thrustTarget = (gForce) / maxVerticalEngineThrust --* up_down_switch
         end
+        --thrustTarget = utils.clamp(thrustTarget,thrustTarget,1)
+
+
+        local p = 0.0028
+        local i = 0.0012
+        local d = 0.0035
+        if (vThrustPID == nil) then
+            vThrustPID = pid.new(p, i,d) -- magic number tweaked to have a default factor in the 1-10 range
+        end
+
+        vThrustPID:inject(thrustTarget)
+        local thrustInput = vThrustPID:get() --* up_down_switch
+
+
+        Nav.axisCommandManager:setThrottleCommand(axisCommandId.vertical, thrustInput)
+
+
+        local distance,time = Kinematic.computeDistanceAndTime(
+            0,
+            vSpeed,
+            core.getConstructIMass(),
+            force + gForce,
+            0,
+            0
+        )
+            
+            --system.print("currentThrust"..((force + gForce)/maxVerticalEngineThrust)*100)
+
+
+      
     end
     if level then
-        local currentPitchDeg = getRoll(worldVertical, constructRight, -constructForward)
-        local currentPitchDegAbs = math.abs(currentPitchDeg)
-        local currentPitchDegSign = utils.sign(currentPitchDeg)
-        local currentYawDeg = constructRight:dot(constructForward) * 180
-        local currentYawDegAbs = math.abs(currentYawDeg)
-        local currentYawDegSign = utils.sign(currentYawDeg)
         local threshold = 0.001
 
         local autoRollFactor = 4
@@ -1121,7 +1230,6 @@ function script.onFlush()
     local keepCollinearity = 1 -- for easier reading
     local dontKeepCollinearity = 0 -- for easier reading
     local tolerancePercentToSkipOtherPriorities = 1 -- if we are within this tolerance (in%), we don't go to the next priorities
-
 
     -- Rotation
     local angularAcceleration = torqueFactor * (targetAngularVelocity - constructAngularVelocity)
@@ -1163,14 +1271,15 @@ function script.onFlush()
         local lateralStrafeAcceleration =
             Nav.axisCommandManager:composeAxisAccelerationFromThrottle(lateralStrafeEngineTags, axisCommandId.lateral)
         Nav:setEngineForceCommand(lateralStrafeEngineTags, lateralStrafeAcceleration, keepCollinearity)
-    elseif (lateralCommandType == axisCommandType.byvTargetSpeed) then
-        local lateralAcceleration = Nav.axisCommandManager:composeAxisAccelerationFromvTargetSpeed(axisCommandId.lateral)
+    elseif (lateralCommandType == axisCommandType.byTargetSpeed) then
+        local lateralAcceleration =
+            Nav.axisCommandManager:composeAxisAccelerationFromTargetSpeed(axisCommandId.lateral)
         autoNavigationEngineTags = autoNavigationEngineTags .. " , " .. lateralStrafeEngineTags
         autoNavigationAcceleration = autoNavigationAcceleration + lateralAcceleration
     end
 
     -- Vertical Translation
-    if not autoalt then
+    --if not autoalt then
         local verticalStrafeEngineTags = "thrust analog vertical"
         local verticalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.vertical)
         if (verticalCommandType == axisCommandType.byThrottle) then
@@ -1178,10 +1287,10 @@ function script.onFlush()
                 Nav.axisCommandManager:composeAxisAccelerationFromThrottle(
                 verticalStrafeEngineTags,
                 axisCommandId.vertical
-            )
+            ) --+ vec3(self.core.getWorldGravity())
             Nav:setEngineForceCommand(
                 verticalStrafeEngineTags,
-                verticalStrafeAcceleration,
+                verticalStrafeAcceleration - 1,
                 keepCollinearity,
                 "airfoil",
                 "ground",
@@ -1189,13 +1298,60 @@ function script.onFlush()
                 tolerancePercentToSkipOtherPriorities
             )
         end
-    end
+    --end
     -- Rockets
     Nav:setBoosterCommand("rocket_engine")
 end
 function script.onTick(timerId)
-    if timerId == "tenthSecond" then
-        if  planet.radius == nil then 
+if timerId == "apTick" then
+    local up = vec3(core.getWorldVertical()) * -1
+        velocity = vec3(core.getWorldVelocity())
+        vSpd = (velocity.x * up.x) + (velocity.y * up.y) + (velocity.z * up.z)
+    elseif timerId == "tenthSecond" then
+       
+        system.print("vSpeedSigned:"..vSpeedSigned)
+        system.print("vTargetSpeed:"..vTargetSpeed)
+
+        --local test = utils.smoothstep(diff, vSpd/3.6, vTargetSpeed) * 3.6 * constructMass() 
+
+        system.print("thrustTarget:"..thrustTarget)
+        system.print("thrustCurrent:"..thrustCurrent)
+        system.print("thrustInput:"..vThrustPID:get())
+        --system.print("force:"..force)
+        --system.print("gForce:"..gForce)
+        --system.print("distance:" .. distance)
+        --system.print("time" .. time)
+
+        system.print(maxVerticalEngineThrust)
+
+        if currentAltitude < targetAltitude then
+
+              --Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
+          end
+  
+          if currentAltitude > targetAltitude then
+            --  up_down_switch = 1
+            --  targetVelocity = (up_down_switch * math.abs(vTargetSpeed) / 3.6) * worldVertical
+            --  stabilization = power * (targetVelocity - vec3(core.getWorldVelocity()))
+            --local throttle_input = throttle_input + throttle_increment
+          --  system.print("DOWN")
+            --  Nav.axisCommandManager:setThrottleCommand(axisCommandId.vertical, 0)
+              --Nav:setEngineCommand("vertical, brake", stabilization - vec3(core.getWorldGravity()), vec3(), false)
+          end
+        --hanlde mouse speed up / down
+        if system.getThrottleInputFromMouseWheel() > 0 then
+            throttle_increment = throttle_increment + 0.05
+            local throttle_input = throttle_input + throttle_increment
+            Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
+        end
+
+        if system.getThrottleInputFromMouseWheel() < 0 then
+            throttle_increment = throttle_increment - 0.05
+            local throttle_input = throttle_input + throttle_increment
+            Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
+        end
+
+        if planet.radius == nil then
             currentAltitude = core.getAltitude()
         else
             currentAltitude = (vec3(core.getConstructWorldPos()) - vec3(planet.center)):len() - planet.radius
@@ -1203,140 +1359,178 @@ function script.onTick(timerId)
 
         if lockBrake then
             brakeInput2 = 1
-        else brakeInput2 = 0                     
+        else
+            brakeInput2 = 0
         end
 
-        local up = vec3(core.getWorldVertical()) * -1
-        local velocity = vec3(core.getWorldVelocity())
-        local vSpd = (velocity.x * up.x) + (velocity.y * up.y) + (velocity.z * up.z)
         hSpd = velocity:len() - math.abs(vSpd)
+
+        relativeYaw = getRelativeYaw(velocity)
+        relativePitch = getRelativePitch(velocity)
+
         local airFriction = vec3(core.getWorldAirFrictionAcceleration()) -- Maybe includes lift?
-        -- todo LastMaxBrake
-        brakeDistance, brakeTime = Kinematic.computeDistanceAndTime(hSpd, 0, constructMass(), 0, 0,
-        LastMaxBrake + vec3(core.getWorldAirFrictionAcceleration()):len() *
-            constructMass())      
 
-        if brakeLanding then    
-            apActive = false    
-            local landingSpd = brakeLandingRate
-            if teledown < 0 then 
-                targetAltitude = currentAltitude - landingSpd
-                elseif teledown > 0 then 
-                    local target
-                    targetAltitude = currentAltitude - utils.clamp(landingSpd,0,teledown)
-                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
-                    Nav.axisCommandManager:setTargetGroundAltitude(teledown)
-                    Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(teledown)
-                elseif teledown < 10 then 
-                    local target
-                    lockBrake = true
-                    targetAltitude = currentAltitude - teledown
-                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
-                    Nav.axisCommandManager:setTargetGroundAltitude(0)
-                    Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(0)                    
-                elseif teledown < 5 then  
-                    lockBrake = false                  
-                    Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
-                else
-                    lockBrake = false
-                end
+        if not brakeLanding and (distance == 0 or distance > 100)then
+            altDiff = targetAltitude - currentAltitude
+            local pitch = getPitch(worldVertical, constructForward, constructRight)
+            local minmax = 800 + vec3(velocity):len()
+            local targetPitch = (utils.smoothstep(altDiff, -minmax, minmax) - 0.5) * 2 * 30 -- 30 = maxpitch
+            if (pitchPID == nil) then
+                pitchPID = pid.new(2 * 0.01, 0, 2 * 0.1) -- magic number tweaked to have a default factor in the 1-10 range
+            end
+            pitchPID:inject(targetPitch - pitch)
+            pitchInput2 = pitchPID:get()
+
+            system.print("PitchInput: " .. pitchInput2)
         end
+        -- todo LastMaxBrake
+        brakeDistance, brakeTime =
+            Kinematic.computeDistanceAndTime(
+            hSpd,
+            0,
+            constructMass(),
+            0,
+            0,
+            LastMaxBrake + vec3(core.getWorldAirFrictionAcceleration()):len() * constructMass()
+        )
 
-
-        if not apActive and not brakeLanding then 
+        if not apActive and not brakeLanding then
             yawInput2 = 0
             pitchInput2 = 0
-            lockBrake = false    
+            rollInput2 = 0
+            lockBrake = false
             speedincrement = 0
             APthrust = 0
         end
 
         if APTarget ~= nil then
-            distance3d = (vec3(core.getConstructWorldPos()) - APTarget):len()            
+            distance3d = (vec3(core.getConstructWorldPos()) - APTarget):len()
             local cwg = vec3(core.getConstructWorldPos())
 
-           local APTargetReleativePos = (APTarget - vec3(core.getConstructWorldPos()))
-           APTargetYaw = APTargetReleativePos:project_on_plane(constructUp)
-           APTargetAngle= APTargetYaw:angle_between(constructForward)
-           local rightAngle= APTargetYaw:angle_between(constructRight)
-           if (rightAngle * constants.rad2deg) < 90 then
-            APTargetAngle = -APTargetAngle
+            local targetVec = (APTarget - vec3(core.getConstructWorldPos()))
+            APTargetYaw = targetVec:project_on_plane(constructUp)
+            APTargetAngle = APTargetYaw:angle_between(constructForward)
+            local rightAngle = APTargetYaw:angle_between(constructRight)
+            if (rightAngle * constants.rad2deg) < 90 then
+                APTargetAngle = -APTargetAngle
             end
 
-            local horizonForward = APTarget:project_on_plane(cwg)
-            distance = horizonForward:len()
-           -- distance = (vec3(core.getConstructWorldPos()) - APTarget):project_on(vec3(core.getConstructWorldOrientationUp())):len()
+            local up = vec3(core.getWorldVertical()) * -1
+            distance = targetVec:len() - targetVec:project_on(up):len()
+             --horizonForward:len()
+            -- distance = (vec3(core.getConstructWorldPos()) - APTarget):project_on(vec3(core.getConstructWorldOrientationUp())):len()
             vecDiff = vec3(core.getConstructWorldPos()) - vec3(APTarget)
             altDiff = -vecDiff:project_on(constructUp):len() * utils.sign(vecDiff:dot(constructUp))
 
-            system.print("altDiff2"..altDiff)
-            
-            -- local distance = targetVector:len() - verticalAmount
-            --horizonUp = APTarget:project_on_plane(constructUp)
-            --system.print("angle:" .. APTargetAngle * constants.rad2deg) --* constants.rad2deg)
+            --system.print("altDiff2" .. altDiff)
+
+        -- local distance = targetVector:len() - verticalAmount
+        --horizonUp = APTarget:project_on_plane(constructUp)
+        --system.print("angle:" .. APTargetAngle * constants.rad2deg) --* constants.rad2deg)
         end
 
-        if APTarget ~= nil and apActive  then
-
-            targetAltitude = currentAltitude + altDiff
+        if APTarget ~= nil and apActive then
+            if brakeLanding then
+                brakeLanding = false
+            end
 
             if currentAltitude == nil then
                 currentAltitude = core.getAltitude()
             end
 
-             if distance > 1 then
+            if math.abs(altDiff) > 0 then
+                targetAltitude = currentAltitude + altDiff
+            end
+
+            if altDiff < 0 and distance < 1100 then
+                --targetAltitude = currentAltitude + 10
+               -- if teledown < 10 and teledown > 0 then
+               --     targetAltitude = targetAltitude + 1
+               -- end
+            end
+
+            if distance > 5 then
                 x = alignToWorldVector(APTarget)
-             end
-             
-             if (brakeDistance * 2.5 > distance) then 
-                lockBrake = true    
+            end
+
+            if (brakeDistance * 2.5 > distance) then
+                lockBrake = true
                 APspeedincrement = 0
                 Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
             else
-                  lockBrake = false    
+                lockBrake = false
             end
 
-             if (not APisaligned and altDiff < 10) or  (distance < 10 and altDiff < 10) then
-                lockBrake = true                 
-             else
+            if (not APisaligned and altDiff < 10) or (distance < 10 and altDiff < 10) then
+                --  lockBrake = true
+            else
                 lockBrake = false
-             end
+            end
 
-               if targetAltitude < 1100 and distance > 1100 then
-                   targetAltitude = 1100
-               end
+            if targetAltitude < 1100 and distance > 1100 then
+                targetAltitude = 1100
+            end
 
-               if targetAltitude < 1100 and distance < 1100 then
-              end
+            hTargetSpeed = utils.clamp(distance, -1000, 1000)
 
-               hTargetSpeed = utils.clamp(distance, -1000,1000)
-  
-               if (hSpd * 3.6 < hTargetSpeed) and APisaligned then
-                    APspeedincrement = APspeedincrement + 0.01
-                    local APthrust = APthrust + APspeedincrement
-                   Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, APthrust)
-               else
-                   Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
-               end
-               system.print("Distance...".. distance)
-               if distance < 5 and hSpd < 1 then
-                lockBrake = true  
+            if (hSpd * 3.6 < hTargetSpeed) and APisaligned then
+                APspeedincrement = APspeedincrement + 0.01
+                local APthrust = APthrust + APspeedincrement
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, APthrust)
+            else
+                Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
+            end
+        
+            --system.print("Distance..." .. distance)
+            if distance < 10 and hSpd < 1 then
+                lockBrake = true
                 targetAltitude = currentAltitude + altDiff
                 Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
                 APspeedincrement = 0
                 APthrust = 0
                 yawInput2 = 0
+                if altDiff < 0 then
+                    lockBrake = false
+                    brakeLanding = true
+                end
+            end
+        end
+    end
 
-              end
-           end
-       end
-       if timerId == "oneSecond" then
+    if brakeLanding then
+        apActive = false
+        local landingSpd = brakeLandingRate * 3.6
+        if teledown < 0 then
+            targetAltitude = currentAltitude - landingSpd
+        elseif teledown > 5 then
+            targetAltitude = currentAltitude - utils.clamp(landingSpd, 0, teledown)
+            Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+            Nav.axisCommandManager:setTargetGroundAltitude(teledown)
+            Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(teledown)
+        elseif teledown < targetHoverHeight and teledown > 5 then
+            lockBrake = true
+            targetAltitude = currentAltitude - teledown - landingGearGroundHeight
+            Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+            Nav.axisCommandManager:setTargetGroundAltitude(targetAltitude)
+            Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(targetAltitude)
+        elseif 1 == 1 then
+            lockBrake = false
+            Nav.axisCommandManager:setTargetGroundAltitude(landingGearGroundHeight)
+             --landingGearGroundHeight)
+            Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(landingGearGroundHeight)
+            --Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+            brakeLanding = false
+        else
+            lockBrake = false
+        end
+    end
+
+    if timerId == "oneSecond" then
         setContainerInfo()
-        setContainerDisplayInfo()                     
-       end
-   
+        setContainerDisplayInfo()
+    --system.print(brakeInput)
+    end
 end
-
 function script.onUpdate()
 
     if vSpeedSigned == nil then
@@ -1348,6 +1542,9 @@ function script.onUpdate()
     hSpd_hud = round(hSpd * 3.6, 0)
 
     local currentvert = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.vertical) * 100, 2)--round(vert_engine.getThrust() / currentvert_max, 2) * 100
+    if vertengine_1 then 
+        currentvert = round((vertengine_1.getThrust() / vertengine_1.getMaxThrust()) * 100,0)
+    end
 
     local currentthrust = round(Nav.axisCommandManager:getThrottleCommand(axisCommandId.longitudinal) * 100, 2)
     local thrustbarneg = false
@@ -1367,6 +1564,9 @@ function script.onUpdate()
     local targetAltitude_hud = round(targetAltitude, 2)
     local initialAlt_hud = round(initialAlt, 2)
     local distance_hud = round(distance,2)
+    local currentRollDeg_hud = round(currentRollDeg,2)
+    local relativeYaw_hud = round(currentYawDeg,2)
+    local relativePitch_hud = round(currentPitchDeg,2)
 
     deltaheight =
         round(
@@ -1388,8 +1588,10 @@ function script.onUpdate()
     local isautoalt = ternary(autoalt, '<div class="on"></div>', '<div class="off"></div>')
     local isaligned = ternary(APisaligned, '<div class="on"></div>', '<div class="off"></div>')
     local apActive_hud = ternary(apActive, '<div class="on"></div>', '<div class="off"></div>')
+    local brakeLanding_hud = ternary(brakeLanding, '<div class="on"></div>', '<div class="off"></div>')
     local brakeInput_hud = ternary(braketoggle, '<div class="on"></div>', '<div class="off"></div>')   
     local braketoggle_hud = ternary(lockBrake, '<div class="on"></div>', '<div class="off"></div>')  
+
 
     local htmlTankInfo = ""
     local cssTankInfo = ""
@@ -1437,6 +1639,8 @@ function script.onUpdate()
         }]]
         cssTankInfo = cssTankInfo .. cssSegment
     end
+-- todo move
+    local targetdegree_hud = round(APTargetAngle * constants.rad2deg,6)
 
     local thrustbarcolor = "#2cb6d1"
     if thrustbarneg then
@@ -1445,6 +1649,31 @@ function script.onUpdate()
     end
     local css = [[
         <style>
+        #heading {
+            display: inline-block;
+            position: relative;
+        }
+        #heading .speedometer {
+            width: 200px;
+            height: 200px;
+            border-radius: 100%;
+            border: 20px solid #2cb6d1;
+            border-right: 20px solid transparent;
+            border-bottom: 20px solid transparent;
+            -webkit-transform: rotate(45deg);
+            display: inline-block;
+        }
+        #heading .needle {
+            width: 2px;
+            height: 100px;
+            background: #999999;
+            display: inline-block;
+            left: 100px;
+            position: absolute;
+            transform:rotate(]]..targetdegree_hud.. [[deg); /*degree*/
+            transform-origin:bottom;
+        }
+        
         body {
         }
         .row {
@@ -1555,12 +1784,34 @@ function script.onUpdate()
         }
      </style>]]
 
-     local html = [[        
+     local html = [[       
+        <p>Heading ]].. targetdegree_hud .. [[°</p>
+        <div id="heading">	<span class="speedometer"></span>
+        <span class="needle"></span>
+    </div> 
     <div class="row">
     <div class="column">      
     <h2>Basic</h2>
     <div class="controls-hud">
-        <div class="control-container">
+    <div class="control-container">
+    <p>Roll</p>
+    ]] ..
+    currentRollDeg_hud ..
+    [[ 
+</div>
+<div class="control-container">
+<p>Yaw</p>
+]] ..
+relativeYaw_hud ..
+[[ 
+</div>
+<div class="control-container">
+<p>Pitch</p>
+]] ..
+relativePitch_hud ..
+[[ 
+</div>
+    <div class="control-container">
             <p>Vertical Speed</p>
             ]] ..
             vSpeed_hud ..
@@ -1611,17 +1862,23 @@ function script.onUpdate()
             " m" ..
             [[
         </div>
+        <div class="control-container">
+            <p>Brake Landing</p>
+            ]] ..
+            brakeLanding_hud ..
+            [[
+        </div>
     </div>
     <h2>Autopilot</h2>
     <div class="controls-hud">
         <div class="control-container">
-            <p>active</p>
+            <p>AP Active</p>
             ]] ..
             apActive_hud ..
             [[
         </div>
         <div class="control-container">
-            <p>aligned</p>
+            <p>AP Aligned</p>
             ]] ..
             isaligned ..
             [[
@@ -1686,26 +1943,33 @@ function script.onUpdate()
         system.setScreen(html)
         system.showScreen(1)
 end
-
 function script.onActionStart(action)
     if action == "gear" then
-        apActive = false
         brakeLanding = not brakeLanding
+        if brakeLanding then
+            apActive = false
+        end
+        if not brakeLanding then
+            targetAltitude = currentAltitude
+        end
     elseif action == "brake" then
         brakeInput = brakeInput + 1
         local longitudinalCommandType = Nav.axisCommandManager:getAxisCommandType(axisCommandId.longitudinal)
         if (longitudinalCommandType == axisCommandType.byvTargetSpeed) then
             local vTargetSpeed = Nav.axisCommandManager:getvTargetSpeed(axisCommandId.longitudinal)
             if (math.abs(vTargetSpeed) > constants.epsilon) then
-                Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, - utils.sign(vTargetSpeed))
+                Nav.axisCommandManager:updateCommandFromActionStart(
+                    axisCommandId.longitudinal,
+                    -utils.sign(vTargetSpeed)
+                )
             end
         end
     elseif action == "forward" then
         if level then
             --Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 1)
         else
-        pitchInput = pitchInput - 1
-        end 
+            pitchInput = pitchInput - 1
+        end
     elseif action == "speedup" then
         Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, 0)
         throttle_increment = 0
@@ -1713,19 +1977,19 @@ function script.onActionStart(action)
         if level then
             --Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -1)
         else
-        pitchInput = pitchInput + 1
-        end    
+            pitchInput = pitchInput + 1
+        end
     elseif action == "left" then
         if level then
             Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, -1.0)
-        else    
-        rollInput = rollInput - 1
+        else
+            rollInput = rollInput - 1
         end
     elseif action == "right" then
         if level then
             Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, 1.0)
-        else    
-        rollInput = rollInput + 1
+        else
+            rollInput = rollInput + 1
         end
     elseif action == "yawright" then
         yawInput = yawInput - 1
@@ -1738,61 +2002,75 @@ function script.onActionStart(action)
     elseif action == "speedup" then
         Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, 5.0)
     elseif action == "speeddown" then
-        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -5.0)                
+        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.longitudinal, -5.0)
     elseif action == "up" then
         if autoalt then
-            increment = 0.125    
-        else   
-        Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
-        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, 1.0)
+            increment = 0.125
+        else
+            Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, 1.0)
         end
     elseif action == "down" then
         if autoalt then
             increment = 0.125
-        else   
-        Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
-        Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, -1.0)
+        else
+            Nav.axisCommandManager:deactivateGroundEngineAltitudeStabilization()
+            Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.vertical, -1.0)
         end
     elseif action == "option1" then
         level = not level
     elseif action == "option2" then
         autoalt = not autoalt
     elseif action == "option4" then
+        if brakeLanding then
+            brakeLanding = not brakeLanding
+        end
         apActive = not apActive
-        if lockBrake then 
-            lockBrake  = false 
+        if not apActive then
+            targetAltitude = currentAltitude
+        end
+
+        if lockBrake then
+            lockBrake = false
             brakeInput2 = 0
             brakeInput = 0
         end
-       end
+    elseif action == "speedup" then
+        throttle_increment = throttle_increment + 0.01
+        system.print("actionLoop forward" .. math.abs(throttle_input))
+        local throttle_input = throttle_input + throttle_increment
+        Nav.axisCommandManager:updateCommandFromMouseWheel(axisCommandId.longitudinal, throttle_input)
+    elseif action == "speeddown" then
+        throttle_increment = throttle_increment - 0.01
+        local throttle_input = throttle_input + throttle_increment
+        Nav.axisCommandManager:updateCommandFromMouseWheel(axisCommandId.longitudinal, throttle_input)
+    end
 end
-
 function script.onActionStop(action)
     if action == "gear" then
-        --brakeLanding = false
     elseif action == "brake" then
         brakeInput = brakeInput - 1
     elseif action == "forward" then
         if level then
         else
-        pitchInput = pitchInput + 1
+            pitchInput = pitchInput + 1
         end
     elseif action == "backward" then
         if level then
         else
-        pitchInput = pitchInput - 1
-        end    
+            pitchInput = pitchInput - 1
+        end
     elseif action == "left" then
         if level then
             Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, 1.0)
-        else    
-        rollInput = rollInput + 1
+        else
+            rollInput = rollInput + 1
         end
     elseif action == "right" then
         if level then
             Nav.axisCommandManager:updateCommandFromActionStart(axisCommandId.lateral, -1.0)
-        else    
-        rollInput = rollInput - 1
+        else
+            rollInput = rollInput - 1
         end
     elseif action == "yawright" then
         yawInput = yawInput + 1
@@ -1805,58 +2083,54 @@ function script.onActionStop(action)
     elseif action == "up" then
         if autoalt then
             increment = 0.125
-        else   
-        Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, -1.0)
-        Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+        else
+            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, -1.0)
+            Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
         end
     elseif action == "down" then
-            if autoalt then
-                increment = 0.125
-        else   
-        Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, 1.0)
-        Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
+        if autoalt then
+            increment = 0.125
+        else
+            Nav.axisCommandManager:updateCommandFromActionStop(axisCommandId.vertical, 1.0)
+            Nav.axisCommandManager:activateGroundEngineAltitudeStabilization(currentGroundAltitudeStabilization)
         end
     elseif action == "option2" then
         initialAlt = core.getAltitude()
         targetAltitude = initialAlt
     end
 end
-
 function script.onActionLoop(action)
     if action == "brake" then
     elseif action == "forward" then
         if level then
             throttle_increment = throttle_increment + 0.01
-            --system.print("actionLoop forward".. math.abs(throttle_input))          
+            --system.print("actionLoop forward".. math.abs(throttle_input))
             local throttle_input = throttle_input + throttle_increment
-           Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
-           
+            Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
         else
-        --pitchInput = pitchInput + 1
-        end       
+            --pitchInput = pitchInput + 1
+        end
     elseif action == "backward" then
         if level then
+            --system.print("actionLoop backward".. math.abs(throttle_input))
             throttle_increment = throttle_increment - 0.01
             local throttle_input = throttle_input + throttle_increment
             Nav.axisCommandManager:setThrottleCommand(axisCommandId.longitudinal, throttle_input)
-            --system.print("actionLoop backward".. math.abs(throttle_input))
         else
-        --pitchInput = pitchInput - 1
+            --pitchInput = pitchInput - 1
         end
     elseif action == "up" then
         if autoalt then
             targetAltitude = targetAltitude + increment
             increment = increment + 0.0125
-            end    
+        end
     elseif action == "down" then
-            if autoalt then
-                targetAltitude = targetAltitude - increment
-                increment = increment + 0.0125
-                end 
-
+        if autoalt then
+            targetAltitude = targetAltitude - increment
+            increment = increment + 0.0125
+        end
     end
-
-end    
+end
 function script.onInputText(text)
     local i
     local commands = "/commands /setname /G /agg /addlocation"
@@ -1911,8 +2185,9 @@ function script.onInputText(text)
 
         system.print(currentPos:__tostring())
         system.print(targetPos:__tostring())
-    
+
         APTarget = targetPos
+        apActive = true
     end
 end
 script.onStart()
